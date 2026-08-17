@@ -6,6 +6,8 @@ describe("AI routing", () => {
     const question = "Agrega el expediente 93/2026 de la Tercera Sala a General";
     expect(determineRequestType(question)).toBe("add_cases");
     expect(determineAiTier({ question })).toBe("fast");
+    expect(determineRequestType("¿Qué sesiones tengo próximas?")).toBe("session_lookup");
+    expect(determineRequestType("Muéstrame los asuntos listados esta semana")).toBe("session_lookup");
   });
 
   it("uses pro and premium only for materially complex analysis", () => {

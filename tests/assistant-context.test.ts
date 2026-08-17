@@ -12,5 +12,12 @@ describe("assistant period resolution", () => {
 
   it("uses explicit Mexican dates and orders ranges", () => {
     expect(resolveAssistantPeriod("Del 03/08/2026 al 10/08/2026", now)).toEqual({ from: "2026-08-03", to: "2026-08-10", label: "2026-08-03 a 2026-08-10" });
+    expect(resolveAssistantPeriod("Me refiero del 17 al 21 de agosto", now)).toEqual({ from: "2026-08-17", to: "2026-08-21", label: "2026-08-17 a 2026-08-21" });
+  });
+
+  it("uses the full judicial workweek and a future window for upcoming sessions", () => {
+    const monday = new Date("2026-08-17T18:00:00.000Z");
+    expect(resolveAssistantPeriod("¿Qué sesiones se van a desahogar esta semana?", monday)).toEqual({ from: "2026-08-17", to: "2026-08-21", label: "esta semana hábil" });
+    expect(resolveAssistantPeriod("¿Qué sesiones tengo próximas?", monday)).toEqual({ from: "2026-08-17", to: "2026-11-09", label: "las próximas 12 semanas" });
   });
 });

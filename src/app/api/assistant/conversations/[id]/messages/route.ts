@@ -47,7 +47,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
     if (!userMessage) return NextResponse.json({ ok: false, error: "Conversación no encontrada" }, { status: 404 });
 
-    const context = await buildAssistantContext(session.organizationId, session.userId, parsedBody.data.message);
+    const context = await buildAssistantContext(session.organizationId, session.userId, parsedBody.data.message, existing.messages);
     const generated = await answerWithAi({
       organizationId: session.organizationId,
       userId: session.userId,

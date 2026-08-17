@@ -18,7 +18,7 @@ function normalized(value: string): string {
 export function determineRequestType(question: string): AiRequestType {
   const text = normalized(question);
   if (/\b(agrega|anade|añade|registra|vigila|da de alta)\b/.test(text) && /\b(expediente|amparo|queja|toca|asunto)\b/.test(text)) return "add_cases";
-  if (/\b(listad[oa]|sesion|sesiono|ponente|sentido)\b/.test(text)) return "session_lookup";
+  if (/\b(listad[oa]s?|sesiones?|sesiono|ponente|sentido)\b/.test(text)) return "session_lookup";
   if (/\b(analiza|interpretacion|implicaciones|estrategia|riesgo procesal|razonamiento juridico)\b/.test(text)) return "legal_analysis";
   if (/\b(resume|resumen|explica|que ocurrio|cronologia)\b/.test(text)) return "summary";
   if (/\b(publicaciones|resoluciones|acuerdos|autos|boletin)\b/.test(text)) return "publication_list";

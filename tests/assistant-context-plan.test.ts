@@ -13,4 +13,23 @@ describe("assistant context planning", () => {
     const plan = planAssistantContext("Muéstrame las resoluciones", now);
     expect(plan.period).toEqual({ from: "2026-07-18", to: "2026-08-17", label: "los últimos 30 días" });
   });
+
+  it("inherits session intent for a date-only clarification", () => {
+    const plan = planAssistantContext("Me refiero del 17 al 21 de agosto", now, "¿Qué sesiones se van a desahogar esta semana?");
+    expect(plan).toMatchObject({
+      requestType: "session_lookup",
+      period: { from: "2026-08-17", to: "2026-08-21" },
+      needsSessions: true,
+      boundSessionsToPeriod: true,
+    });
+  });
+
+  it("defaults an unbounded session question to future session dates", () => {
+    const plan = planAssistantContext("¿Qué sesiones tengo?", now);
+    expect(plan).toMatchObject({
+      requestType: "session_lookup",
+      period: { from: "2026-08-17", to: "2026-11-09" },
+      boundSessionsToPeriod: true,
+    });
+  });
 });

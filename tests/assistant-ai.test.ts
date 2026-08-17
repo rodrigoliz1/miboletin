@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAssistantCompletion } from "@/lib/assistant/ai";
+import { enforceGroundedSessionAnswer, parseAssistantCompletion } from "@/lib/assistant/ai";
 
 describe("assistant tool calling", () => {
   it("preserves validated add_monitored_cases calls", () => {
@@ -22,5 +22,24 @@ describe("assistant tool calling", () => {
     expect(parsed.content).toContain("**20 resoluciones**");
     expect(parsed.content).toContain("| Expediente | Órgano |");
     expect(parsed.content).not.toContain("CONTEXTO_JUDICIAL");
+  });
+
+  it("replaces a false no-sessions answer with the verified listed matters", () => {
+    const corrected = enforceGroundedSessionAnswer("No hay sesiones programadas.", {
+      requestedPeriod: { from: "2026-08-17", to: "2026-08-21" },
+      sessions: [
+        { caseNumber: "29/2026", caseType: "Queja", court: "Tercer Tribunal Colegiado en Materia Civil del Tercer Circuito", listedDate: "2026-07-31", sessionDate: "2026-08-20" },
+        { caseNumber: "214/2026", caseType: "Amparo en Revisión", court: "Segundo Tribunal Colegiado en Materia Civil del Primer Circuito", listedDate: "2026-08-14", sessionDate: "2026-08-20" },
+      ],
+    }, "session_lookup");
+    expect(corrected).toContain("**2 asuntos listados a sesión**");
+    expect(corrected).toContain("**29/2026**");
+    expect(corrected).toContain("**214/2026**");
+    expect(corrected).not.toContain("No hay sesiones");
+  });
+
+  it("does not expose an internal sessions array", () => {
+    const parsed = parseAssistantCompletion({ choices: [{ message: { content: "Revisé (\"sessions\":[]) y no encontré coincidencias." } }] });
+    expect(parsed.content).not.toContain("sessions");
   });
 });
