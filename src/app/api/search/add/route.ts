@@ -19,14 +19,14 @@ export async function POST(request: Request) {
   const folders = z.array(z.string().uuid()).min(1).max(20).safeParse(form.getAll("folders"));
   if (!parsed.success || !folders.success) return NextResponse.redirect(new URL("/search?error=selection", request.url), 303);
   const result = decodeSearchResult(parsed.data.payload, parsed.data.token, session.organizationId);
-  if (!result || (result.jurisdiction === "JALISCO") !== (result.provider === "jalisco-cjj")) return NextResponse.redirect(new URL("/search?error=selection", request.url), 303);
+  if (!result || (result.jurisdiction === "JALISCO") !== result.provider.startsWith("jalisco-")) return NextResponse.redirect(new URL("/search?error=selection", request.url), 303);
   try {
     const parsedNumber = normalizeCaseNumber(result.caseNumber);
     const id = await createMonitoredCase({
       organizationId: session.organizationId, userId: session.userId, jurisdiction: result.jurisdiction,
       provider: result.provider,
-      authorityName: result.jurisdiction === "JALISCO" ? "Poder Judicial del Estado de Jalisco" : "Poder Judicial de la Federación",
-      sourceUrl: result.jurisdiction === "JALISCO" ? "https://cjj.gob.mx/bulletin" : "https://www.dgej.cjf.gob.mx/SiseInternet",
+      authorityName: result.provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia del Estado de Jalisco" : result.jurisdiction === "JALISCO" ? "Poder Judicial del Estado de Jalisco" : "Poder Judicial de la Federación",
+      sourceUrl: result.provider === "jalisco-stj-chambers" ? "https://consultas.stjjalisco.gob.mx/consultas/acuerdos" : result.jurisdiction === "JALISCO" ? "https://cjj.gob.mx/bulletin" : "https://www.dgej.cjf.gob.mx/SiseInternet",
       courtExternalId: result.courtExternalId, courtName: result.courtName, courtType: result.courtType,
       circuitId: result.circuitId, circuitName: result.circuitName, caseNumber: result.caseNumber, caseType: result.caseType,
       folderIds: folders.data, monitorFrom: result.jurisdiction === "JALISCO" ? "1900-01-01" : `${parsedNumber.year}-01-01`,

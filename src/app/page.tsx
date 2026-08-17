@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import {
   ArrowRight,
   BellSimpleRinging,
@@ -36,6 +37,7 @@ export default function Home() {
           <p className="hero-fine">Sin permanencia forzosa · Pago seguro con Stripe</p>
         </div>
         <div className="hero-visual" aria-label="Ejemplo del seguimiento de una publicación judicial">
+          <div className="hero-architecture"><Image src="/images/architecture-justice-campus.png" alt="Arquitectura contemporánea de un complejo público de justicia" width={1678} height={943} priority sizes="(max-width: 820px) 100vw, 48vw" /></div>
           <article className="publication-sheet">
             <header className="sheet-head"><div><span className="sheet-kicker">Boletín de resoluciones</span><h2 className="sheet-title">Agenda del despacho</h2></div><div className="sheet-date">16 de agosto<br />de 2026</div></header>
             <p className="sheet-case">192/2025</p><p className="sheet-court">Juzgado Primero de lo Civil del Primer Partido Judicial</p>

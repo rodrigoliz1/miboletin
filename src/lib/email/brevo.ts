@@ -2,9 +2,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db/client";
 
-type EmailKind = "WELCOME" | "PAYMENT_CONFIRMED" | "PAYMENT_FAILED" | "SUBSCRIPTION_CANCELED" | "JUDICIAL_ALERT" | "EMAIL_VERIFICATION" | "PASSWORD_RESET";
+export type EmailKind = "WELCOME" | "PAYMENT_CONFIRMED" | "PAYMENT_FAILED" | "SUBSCRIPTION_CANCELED" | "SUBSCRIPTION_EXPIRING" | "SUBSCRIPTION_RENEWAL" | "JUDICIAL_ALERT" | "EMAIL_VERIFICATION" | "PASSWORD_RESET";
 
-interface EmailInput {
+export interface EmailInput {
   dedupeKey: string;
   organizationId: string;
   userId?: string;
@@ -20,6 +20,8 @@ interface EmailInput {
   actionLabel?: string;
   verificationCode?: string;
   verificationExpiresInMinutes?: number;
+  daysRemaining?: number;
+  campaignVariant?: number;
 }
 
 function escapeHtml(value: string) {
@@ -35,6 +37,27 @@ function content(input: EmailInput) {
   if (input.kind === "PASSWORD_RESET") return { subject: "Código para recuperar tu contraseña", title: "Recupera el acceso a tu cuenta", body: `Recibimos una solicitud para cambiar la contraseña de ${escapeHtml(input.recipient)}. Usa este código durante los próximos ${input.verificationExpiresInMinutes ?? 10} minutos. Si no fuiste tú, ignora este correo.`, action: "" };
   if (input.kind === "JUDICIAL_ALERT") return { subject: input.customSubject ?? "Nueva publicación en uno de tus asuntos", title: input.customTitle ?? "Nueva publicación judicial", body: escapeHtml(input.customBody ?? "Hay una publicación vinculada a uno de tus asuntos vigilados."), action: input.actionLabel ?? "Abrir asunto" };
   const end = date(input.periodEnd);
+  if (input.kind === "SUBSCRIPTION_EXPIRING") {
+    const days = Math.max(1, Math.min(3, input.daysRemaining ?? 3));
+    return {
+      subject: `Tu acceso vence en ${days} ${days === 1 ? "día" : "días"}`,
+      title: days === 1 ? "Tu acceso vence mañana" : `Quedan ${days} días de acceso`,
+      body: `Tu suscripción dejará de estar disponible${end ? ` el ${end}` : " próximamente"}. Renueva desde tu perfil para conservar sin interrupciones tus expedientes, alertas y seguimiento de sesiones.`,
+      action: "Revisar mi suscripción",
+      eyebrow: "Continuidad del servicio",
+      highlights: ["Conserva la vigilancia diaria", "Mantén tus carpetas y asuntos", "Continúa recibiendo avisos importantes"],
+    };
+  }
+  if (input.kind === "SUBSCRIPTION_RENEWAL") {
+    const variants = [
+      { subject: "Tus asuntos pueden seguir bajo vigilancia", title: "Retoma tu vigilancia judicial", body: "Reactiva el acceso para volver a concentrar resoluciones, acuerdos y sesiones de tus expedientes en un solo espacio." },
+      { subject: "Vuelve a recibir avisos judiciales importantes", title: "Que una publicación no te tome por sorpresa", body: "Renueva tu suscripción y recupera el seguimiento de sentencias, listados a sesión y resoluciones relevantes." },
+      { subject: "Tus carpetas están listas para continuar", title: "Recupera el control de tus asuntos", body: "Tu organización y expedientes permanecen disponibles. Al renovar, podrás consultar nuevamente el historial y las publicaciones recientes." },
+      { subject: "Una agenda judicial más clara empieza aquí", title: "Vuelve a Mi Boletín Judicial", body: "Centraliza la revisión de tus asuntos y reduce el tiempo destinado a consultar fuentes judiciales por separado." },
+    ];
+    const copy = variants[Math.abs(input.campaignVariant ?? 0) % variants.length];
+    return { ...copy, action: "Renovar suscripción", eyebrow: "Reactiva tu cuenta", highlights: ["Resoluciones locales y federales", "Seguimiento de sesiones", "Asistente y carpetas del despacho"] };
+  }
   if (input.kind === "WELCOME") return { subject: "Tu vigilancia judicial ya está activa", title: "Bienvenido a Mi Boletín Judicial", body: `La suscripción de ${escapeHtml(input.organizationName)} quedó vinculada correctamente. Ya puedes registrar expedientes, organizarlos en carpetas y consultar sus publicaciones desde un solo lugar.`, action: "Abrir mi panel" };
   if (input.kind === "PAYMENT_CONFIRMED") return { subject: "Pago confirmado — Mi Boletín Judicial", title: "Tu suscripción está activa", body: `Confirmamos correctamente tu pago${end ? ` y tu acceso está vigente hasta el ${end}` : ""}. Tu espacio de vigilancia ya está disponible.`, action: "Abrir mi panel" };
   if (input.kind === "PAYMENT_FAILED") return { subject: "Es necesario actualizar tu forma de pago", title: "No pudimos procesar la renovación", body: "Tu institución bancaria rechazó el último cobro. Actualiza tu forma de pago para conservar el acceso a tus asuntos y avisos.", action: "Actualizar forma de pago" };
@@ -47,7 +70,9 @@ function document(input: EmailInput) {
   const actionUrl = new URL(input.actionPath ?? "/settings#billing", appUrl).toString();
   const code = (input.kind === "EMAIL_VERIFICATION" || input.kind === "PASSWORD_RESET") && input.verificationCode ? `<div style="margin:30px 0;padding:23px 16px;border-top:1px solid #d9d1c5;border-bottom:1px solid #d9d1c5;background:#f3efe7;text-align:center;font-family:Georgia,serif;font-size:38px;letter-spacing:.22em;font-variant-numeric:tabular-nums">${escapeHtml(input.verificationCode)}</div>` : "";
   const action = copy.action ? `<a href="${actionUrl}" style="display:inline-block;background:#722f37;color:#fff;text-decoration:none;padding:13px 20px;font-weight:700">${copy.action}</a>` : "";
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;background:#f3efe7;color:#26231f;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:42px 18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fffdf8;border:1px solid #d9d1c5"><tr><td style="padding:24px 32px;border-bottom:3px solid #722f37;font-family:Georgia,serif;font-size:18px">MI BOLETÍN JUDICIAL</td></tr><tr><td style="padding:42px 32px"><p style="margin:0 0 12px;color:#722f37;font-size:12px;letter-spacing:.12em;text-transform:uppercase">Información de tu cuenta</p><h1 style="margin:0 0 20px;font-family:Georgia,serif;font-size:34px;font-weight:500;line-height:1.1">${copy.title}</h1><p style="font-size:16px;line-height:1.7;margin:0 0 10px">Hola, ${escapeHtml(input.recipientName)}. ${copy.body}</p>${code}${action}</td></tr><tr><td style="padding:22px 32px;background:#eee8de;color:#6f685f;font-size:12px;line-height:1.6">Este mensaje se relaciona con la cuenta de ${escapeHtml(input.organizationName)}. No compartas tus credenciales ni códigos de verificación.</td></tr></table></td></tr></table></body></html>`;
+  const highlights = "highlights" in copy && copy.highlights?.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;border-top:1px solid #d9d1c5">${copy.highlights.map((item) => `<tr><td style="padding:12px 0;border-bottom:1px solid #d9d1c5;color:#4b4640;font-size:14px"><span style="color:#722f37;margin-right:9px">✓</span>${escapeHtml(item)}</td></tr>`).join("")}</table>` : "";
+  const eyebrow = "eyebrow" in copy && copy.eyebrow ? copy.eyebrow : "Información de tu cuenta";
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;background:#f3efe7;color:#26231f;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:42px 18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fffdf8;border:1px solid #d9d1c5"><tr><td style="padding:24px 32px;border-bottom:3px solid #722f37;font-family:Georgia,serif;font-size:18px">MI BOLETÍN JUDICIAL</td></tr><tr><td style="padding:42px 32px"><p style="margin:0 0 12px;color:#722f37;font-size:12px;letter-spacing:.12em;text-transform:uppercase">${escapeHtml(eyebrow)}</p><h1 style="margin:0 0 20px;font-family:Georgia,serif;font-size:34px;font-weight:500;line-height:1.1">${copy.title}</h1><p style="font-size:16px;line-height:1.7;margin:0 0 10px">Hola, ${escapeHtml(input.recipientName)}. ${copy.body}</p>${code}${highlights}${action}</td></tr><tr><td style="padding:22px 32px;background:#eee8de;color:#6f685f;font-size:12px;line-height:1.6">Este mensaje se relaciona con la cuenta de ${escapeHtml(input.organizationName)}. Gestiona tu suscripción únicamente desde Mi Boletín Judicial y no compartas tus credenciales.</td></tr></table></td></tr></table></body></html>`;
 }
 
 export async function sendTransactionalEmail(input: EmailInput): Promise<"SENT" | "SKIPPED"> {

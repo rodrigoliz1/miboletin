@@ -26,7 +26,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
     const pendingPublicationIds: string[] = [];
     const pendingDetectedAt: string[] = [];
     const jurisdiction = provider.startsWith("jalisco") ? "JALISCO" : "FEDERAL";
-    const providerName = jurisdiction === "JALISCO" ? "Consejo de la Judicatura del Estado de Jalisco" : "Poder Judicial de la Federación";
+    const providerName = provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia del Estado de Jalisco" : jurisdiction === "JALISCO" ? "Consejo de la Judicatura del Estado de Jalisco" : "Poder Judicial de la Federación";
     const [authority] = await tx`
       INSERT INTO judicial_authorities (code, name, jurisdiction, source_url)
       VALUES (${provider}, ${providerName}, ${jurisdiction}, ${items[0]?.sourceUrl ?? ""})
@@ -40,6 +40,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
       const rawPayload = Object.fromEntries(Object.entries(rawContainer).filter(([key]) => key !== "rawHtml"));
       const federalRecord = rawContainer.record && typeof rawContainer.record === "object" ? rawContainer.record as Record<string, unknown> : null;
       const federalAgreement = rawContainer.agreement && typeof rawContainer.agreement === "object" ? rawContainer.agreement as Record<string, unknown> : null;
+      const stjMetadata = rawContainer.metadata && typeof rawContainer.metadata === "object" ? rawContainer.metadata as Record<string, unknown> : null;
       const publicationKind = federalRecord?.filter === "lista" ? "SESSION_LISTED" : federalRecord?.filter === "sesion" ? "SESSION_RESULT" : "AGREEMENT";
       if (!checkedSnapshotRevisions.has(item.snapshotHash)) {
         const previous = await tx`
@@ -133,6 +134,39 @@ export async function persistPublications(provider: string, items: NormalizedPub
         `;
       }
 
+      if (provider === "jalisco-stj-chambers" && stjMetadata) {
+        const sentenceSignal = textValue(stjMetadata.sentenceSignal) ?? "NONE";
+        const sentenceState = sentenceSignal === "NONE" ? "NOT_EXPECTED" : "PENDING_PUBLICATION";
+        await tx`
+          INSERT INTO stj_case_details (
+            judicial_case_id, chamber_external_id, origin_case_number, origin_court, judicial_district,
+            appeal_type, proceeding, sentence_state, possible_sentence_at, next_retry_at, official_search_url
+          ) VALUES (
+            ${judicialCase.id}, ${item.courtExternalId}, ${textValue(stjMetadata.originCaseNumber)},
+            ${textValue(stjMetadata.originCourt)}, ${textValue(stjMetadata.judicialDistrict)},
+            ${textValue(stjMetadata.appealType)}, ${textValue(stjMetadata.proceeding)}, ${sentenceState},
+            ${sentenceSignal === "NONE" ? null : item.retrievedAt},
+            ${sentenceSignal === "NONE" ? null : item.retrievedAt},
+            'https://publicacionsentencias.stjjalisco.gob.mx/sentencias'
+          )
+          ON CONFLICT (judicial_case_id) DO UPDATE SET
+            chamber_external_id = EXCLUDED.chamber_external_id,
+            origin_case_number = COALESCE(EXCLUDED.origin_case_number, stj_case_details.origin_case_number),
+            origin_court = COALESCE(EXCLUDED.origin_court, stj_case_details.origin_court),
+            judicial_district = COALESCE(EXCLUDED.judicial_district, stj_case_details.judicial_district),
+            appeal_type = COALESCE(EXCLUDED.appeal_type, stj_case_details.appeal_type),
+            proceeding = COALESCE(EXCLUDED.proceeding, stj_case_details.proceeding),
+            sentence_state = CASE
+              WHEN stj_case_details.sentence_state = 'AVAILABLE' THEN 'AVAILABLE'
+              WHEN EXCLUDED.sentence_state = 'PENDING_PUBLICATION' THEN 'PENDING_PUBLICATION'
+              ELSE stj_case_details.sentence_state
+            END,
+            possible_sentence_at = COALESCE(stj_case_details.possible_sentence_at, EXCLUDED.possible_sentence_at),
+            next_retry_at = CASE WHEN EXCLUDED.sentence_state = 'PENDING_PUBLICATION' THEN LEAST(COALESCE(stj_case_details.next_retry_at, EXCLUDED.next_retry_at), EXCLUDED.next_retry_at) ELSE stj_case_details.next_retry_at END,
+            updated_at = now()
+        `;
+      }
+
       for (const [side, name] of Object.entries(item.parties ?? {})) {
         if (!name) continue;
         await tx`
@@ -185,7 +219,8 @@ export async function persistPublications(provider: string, items: NormalizedPub
                  CASE jp.publication_kind
                    WHEN 'SESSION_LISTED' THEN 'Asunto federal listado para sesión: ' || watched.case_number_normalized
                    WHEN 'SESSION_RESULT' THEN 'Resultado de sesión federal: ' || watched.case_number_normalized
-                   ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END || watched.case_number_normalized
+                   WHEN 'STJ_JUDGMENT' THEN 'Sentencia del STJ disponible: ' || watched.case_number_normalized
+                   ELSE CASE WHEN jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)' THEN 'Resolución relacionada con sentencia: ' ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END END || watched.case_number_normalized
                  END,
                  jsonb_build_object(
                    'publicationId', jp.id, 'matchResult', 'EXACT', 'publicationKind', jp.publication_kind,
@@ -203,7 +238,16 @@ export async function persistPublications(provider: string, items: NormalizedPub
           ) recipients ON true
           CROSS JOIN (VALUES ('IN_APP'), ('EMAIL')) AS delivery(channel)
           WHERE cm.id = ANY(${movementIds}::uuid[])
-            AND (delivery.channel = 'IN_APP' OR jp.publication_date >= mc.created_at::date)
+            AND (
+              delivery.channel = 'IN_APP'
+              OR (
+                jp.publication_date >= mc.created_at::date
+                AND (
+                  jp.publication_kind IN ('SESSION_LISTED', 'SESSION_RESULT', 'STJ_JUDGMENT')
+                  OR jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)'
+                )
+              )
+            )
           ON CONFLICT DO NOTHING
           RETURNING id
         `;

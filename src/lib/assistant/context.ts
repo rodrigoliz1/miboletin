@@ -1,6 +1,7 @@
 import { db } from "@/lib/db/client";
 import { dateInMexicoCity, isIsoDate } from "@/lib/product/query";
 import type { AssistantPeriod } from "@/lib/assistant/types";
+import { determineRequestType } from "@/lib/ai/routing";
 
 function shiftDate(value: string, days: number): string {
   const date = new Date(`${value}T12:00:00.000Z`);
@@ -43,16 +44,37 @@ function requestedCaseNumber(question: string): string | null {
   return match ? `${Number(match[1])}/${match[2]}` : null;
 }
 
+export function planAssistantContext(question: string, now = new Date()) {
+  let period = resolveAssistantPeriod(question, now);
+  const caseNumber = requestedCaseNumber(question);
+  const requestType = determineRequestType(question);
+  const normalizedQuestion = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const addingCases = requestType === "add_cases";
+  if (!caseNumber && period.label === "los últimos 365 días") {
+    const today = dateInMexicoCity(now);
+    period = { from: shiftDate(today, -30), to: today, label: "los últimos 30 días" };
+  }
+  return {
+    period,
+    caseNumber,
+    requestType,
+    caseLimit: addingCases ? 0 : caseNumber ? 5 : 80,
+    movementLimit: caseNumber ? 100 : 120,
+    needsMovements: !addingCases && requestType !== "general",
+    needsSessions: !addingCases && (requestType === "session_lookup" || requestType === "legal_analysis" || requestType === "summary" || Boolean(caseNumber)),
+    needsDocuments: !addingCases && (Boolean(caseNumber) || /\b(sentencia|documento|archivo|aclaracion)\b/.test(normalizedQuestion)),
+  };
+}
+
 function clipped(value: unknown, length = 900): string {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   return text.length > length ? `${text.slice(0, length)}…` : text;
 }
 
 export async function buildAssistantContext(organizationId: string, userId: string, question: string) {
-  const period = resolveAssistantPeriod(question);
-  const caseNumber = requestedCaseNumber(question);
-  const [cases, movements, sessions, alertCount, folders] = await Promise.all([
-    db()`
+  const { period, caseNumber, requestType, caseLimit, movementLimit, needsMovements, needsSessions, needsDocuments } = planAssistantContext(question);
+  const [cases, movements, sessions, documents, alertCount, folders] = await Promise.all([
+    caseLimit ? db()`
       SELECT mc.id, jc.case_number_normalized, jc.case_type, jc.status, count(*) OVER()::int AS total_count,
              c.name AS court_name, c.court_type, ja.jurisdiction,
              cir.name AS circuit_name, folders.folder_name,
@@ -66,9 +88,9 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY mc.created_at DESC
-      LIMIT 250
-    `,
-    db()`
+      LIMIT ${caseLimit}
+    ` : Promise.resolve([]),
+    needsMovements ? db()`
       SELECT jc.case_number_normalized, jc.case_type, c.name AS court_name,
              ja.jurisdiction, folders.folder_name, jp.publication_date,
              jp.agreement_date, jp.promotion_date, jp.publication_kind,
@@ -85,9 +107,9 @@ export async function buildAssistantContext(organizationId: string, userId: stri
         AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY jp.publication_date DESC, jp.retrieved_at DESC
-      LIMIT 300
-    `,
-    db()`
+      LIMIT ${movementLimit}
+    ` : Promise.resolve([]),
+    needsSessions ? db()`
       SELECT jc.case_number_normalized, c.name AS court_name, folders.folder_name,
              jp.publication_date AS list_date, fsd.session_date, jp.publication_kind,
              fsd.result, fsd.judgment, fsd.rapporteur, jp.source_url
@@ -103,8 +125,23 @@ export async function buildAssistantContext(organizationId: string, userId: stri
         AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY COALESCE(fsd.session_date, jp.publication_date) DESC
-      LIMIT 200
-    `,
+      LIMIT ${caseNumber ? 60 : 80}
+    ` : Promise.resolve([]),
+    needsDocuments ? db()`
+      SELECT jc.case_number_normalized, c.name AS court_name, jd.id, jd.document_label,
+             jd.kind, jd.filename, jd.byte_size, jd.published_at, jd.retrieved_at
+      FROM judicial_documents jd
+      JOIN judicial_cases jc ON jc.id = jd.judicial_case_id
+      JOIN courts c ON c.id = jc.court_id
+      WHERE EXISTS (
+        SELECT 1 FROM monitored_cases mc
+        WHERE mc.case_id = jc.id AND mc.organization_id = ${organizationId}
+          AND mc.active AND mc.deleted_at IS NULL
+      )
+        AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
+      ORDER BY COALESCE(jd.published_at, jd.retrieved_at) DESC
+      LIMIT 30
+    ` : Promise.resolve([]),
     db()`
       SELECT count(*)::int AS count
       FROM notifications n
@@ -130,6 +167,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
     generatedAt: new Date().toISOString(),
     timeZone: "America/Mexico_City",
     requestedPeriod: period,
+    requestType,
     requestedCaseNumber: caseNumber,
     activeCaseCount: Number(cases[0]?.total_count ?? 0),
     unreadAlertCount: Number(alertCount[0]?.count ?? 0),
@@ -170,6 +208,16 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       judgment: clipped(row.judgment, 500) || null,
       rapporteur: row.rapporteur,
       officialSource: row.source_url,
+    })),
+    documents: documents.map((row) => ({
+      caseNumber: row.case_number_normalized,
+      court: row.court_name,
+      label: row.document_label ?? row.filename,
+      kind: row.kind,
+      byteSize: Number(row.byte_size),
+      publishedAt: row.published_at,
+      retrievedAt: row.retrieved_at,
+      applicationPath: `/api/documents/${row.id}`,
     })),
   };
 }

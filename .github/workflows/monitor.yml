@@ -25,6 +25,7 @@ jobs:
       BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
       BREVO_SENDER_EMAIL: ${{ secrets.BREVO_SENDER_EMAIL }}
       BREVO_SENDER_NAME: Mi Boletín Judicial
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
       FEDERAL_SESSION_BASE: https://www.dgej.cjf.gob.mx/SiseInternet
     steps:
       - uses: actions/checkout@v4

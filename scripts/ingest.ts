@@ -5,7 +5,7 @@ import { runIngestion } from "../src/lib/ingestion/pipeline";
 async function main() {
   const args = process.argv.slice(2);
   const providerId = args[0] as ProviderId;
-  if (!(providerId in providers)) throw new Error("Proveedor inválido. Use jalisco o federal.");
+  if (!(providerId in providers)) throw new Error("Proveedor inválido. Use jalisco, stj o federal.");
   const value = (name: string) => args.find((argument) => argument.startsWith(`--${name}=`))?.split("=")[1];
   const from = value("date") ?? value("from") ?? new Date().toISOString().slice(0, 10);
   const to = value("date") ?? value("to") ?? from;

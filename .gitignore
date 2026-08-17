@@ -15,6 +15,7 @@
 /playwright-report/
 /test-results/
 /.pnpm-store/
+/.data/
 
 # next.js
 /.next/

@@ -4,7 +4,7 @@ import { signSelectionOption, verifySelectionOption } from "@/lib/security/selec
 
 export const searchResultPayloadSchema = z.object({
   jurisdiction: z.enum(["JALISCO", "FEDERAL"]),
-  provider: z.enum(["jalisco-cjj", "federal-pjf-session-lists"]),
+  provider: z.enum(["jalisco-cjj", "jalisco-stj-chambers", "federal-pjf-session-lists"]),
   courtExternalId: z.string().min(1).max(60),
   courtName: z.string().min(3).max(240),
   courtType: z.string().max(30).optional(),

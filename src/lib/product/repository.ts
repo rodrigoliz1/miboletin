@@ -76,6 +76,22 @@ export interface MovementRecord {
   notebook?: string;
 }
 
+export interface StjCaseRecord {
+  sentenceState: "NOT_EXPECTED" | "PENDING_PUBLICATION" | "AVAILABLE" | "PARTIAL" | "NOT_FOUND" | "UNAVAILABLE" | "ERROR";
+  originCaseNumber?: string;
+  originCourt?: string;
+  judicialDistrict?: string;
+  appealType?: string;
+  proceeding?: string;
+  possibleSentenceAt?: string;
+  lastAttemptAt?: string;
+  unavailableReason?: string;
+  officialSearchUrl: string;
+  officialDocumentCount?: number;
+  availableDocumentCount: number;
+  documents: Array<{ id: string; filename: string; label: string; kind: "JUDGMENT" | "CLARIFICATION" | "RELATED"; sequence?: number; byteSize: number; sha256: string; publishedAt?: string; retrievedAt: string }>;
+}
+
 export interface OrganizationMovementRecord {
   id: string;
   detected_at: string;
@@ -219,6 +235,56 @@ export async function createFolder(input: { organizationId: string; userId: stri
   return folder.id;
 }
 
+export async function setMonitoredCaseFolders(input: {
+  organizationId: string;
+  userId: string;
+  monitoredCaseId: string;
+  folderIds: string[];
+}): Promise<{ folderIds: string[]; folderNames: string[] } | null> {
+  const folderIds = [...new Set(input.folderIds.map((value) => optionalUuid(value)).filter((value): value is string => Boolean(value)))];
+  if (!folderIds.length || folderIds.length > 20) throw new Error("Selecciona entre 1 y 20 carpetas");
+
+  return db().begin(async (tx) => {
+    const folders = await tx`
+      SELECT f.id, f.name, EXISTS (
+        SELECT 1 FROM monitored_cases mc
+        WHERE mc.id = ${input.monitoredCaseId} AND mc.organization_id = ${input.organizationId}
+          AND mc.active AND mc.deleted_at IS NULL
+      ) AS watched_exists
+      FROM case_folders f
+      WHERE f.organization_id = ${input.organizationId} AND f.id = ANY(${folderIds}::uuid[])
+      ORDER BY created_at, id
+    `;
+    if (!folders[0]?.watched_exists) return null;
+    if (folders.length !== folderIds.length) throw new Error("Una o más carpetas no pertenecen a tu organización");
+
+    const orderedIds = folders.map((folder) => String(folder.id));
+    await tx`
+      WITH removed AS (
+        DELETE FROM monitored_case_folders
+        WHERE monitored_case_id = ${input.monitoredCaseId}
+          AND NOT (folder_id = ANY(${orderedIds}::uuid[]))
+      ), inserted AS (
+        INSERT INTO monitored_case_folders (monitored_case_id, folder_id)
+        SELECT ${input.monitoredCaseId}, selected.id
+        FROM unnest(${orderedIds}::uuid[]) AS selected(id)
+        ON CONFLICT DO NOTHING
+        RETURNING folder_id
+      ), primary_folder AS (
+        UPDATE monitored_cases SET folder_id = ${orderedIds[0]}
+        WHERE id = ${input.monitoredCaseId}
+        RETURNING id
+      )
+      INSERT INTO audit_logs (actor_user_id, organization_id, action, entity_type, entity_id, metadata)
+      VALUES (
+        ${input.userId}, ${input.organizationId}, 'MONITORED_CASE_FOLDERS_UPDATED',
+        'monitored_case', ${input.monitoredCaseId}, ${tx.json({ folderIds: orderedIds })}
+      )
+    `;
+    return { folderIds: orderedIds, folderNames: folders.map((folder) => String(folder.name)) };
+  });
+}
+
 export async function createMonitoredCase(input: {
   organizationId: string;
   userId: string;
@@ -283,6 +349,13 @@ export async function createMonitoredCase(input: {
       ON CONFLICT (canonical_key) DO UPDATE SET case_number_raw = EXCLUDED.case_number_raw, status = 'ACTIVE'
       RETURNING id
     `;
+    if (input.provider === "jalisco-stj-chambers") {
+      await tx`
+        INSERT INTO stj_case_details (judicial_case_id, chamber_external_id, official_search_url)
+        VALUES (${judicialCase.id}, ${input.courtExternalId}, 'https://publicacionsentencias.stjjalisco.gob.mx/sentencias')
+        ON CONFLICT (judicial_case_id) DO UPDATE SET chamber_external_id = EXCLUDED.chamber_external_id, updated_at = now()
+      `;
+    }
     let folderIds = [...new Set((input.folderIds ?? []).map((value) => optionalUuid(value)).filter((value): value is string => Boolean(value)))];
     if (folderIds.length > 20) throw new Error("Selecciona un máximo de 20 carpetas");
     if (folderIds.length) {
@@ -327,7 +400,8 @@ export async function createMonitoredCase(input: {
              CASE jp.publication_kind
                WHEN 'SESSION_LISTED' THEN 'Asunto federal listado para sesión: ' || jc.case_number_normalized
                WHEN 'SESSION_RESULT' THEN 'Resultado de sesión federal: ' || jc.case_number_normalized
-               ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END || jc.case_number_normalized
+               WHEN 'STJ_JUDGMENT' THEN 'Sentencia del STJ disponible: ' || jc.case_number_normalized
+               ELSE CASE WHEN jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)' THEN 'Resolución relacionada con sentencia: ' ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END END || jc.case_number_normalized
              END,
              jsonb_build_object(
                'publicationId', jp.id,
@@ -344,7 +418,16 @@ export async function createMonitoredCase(input: {
       JOIN memberships m ON m.organization_id = ${input.organizationId}
       CROSS JOIN (VALUES ('IN_APP'), ('EMAIL')) AS delivery(channel)
       WHERE cm.monitored_case_id = ${monitored.id} AND jp.publication_date >= ${input.monitorFrom}
-        AND (delivery.channel = 'IN_APP' OR jp.publication_date >= mc.created_at::date)
+        AND (
+          delivery.channel = 'IN_APP'
+          OR (
+            jp.publication_date >= mc.created_at::date
+            AND (
+              jp.publication_kind IN ('SESSION_LISTED', 'SESSION_RESULT', 'STJ_JUDGMENT')
+              OR jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)'
+            )
+          )
+        )
       ON CONFLICT (movement_id, user_id, channel) DO NOTHING
     `;
     await tx`
@@ -417,7 +500,7 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
   }));
 }
 
-export async function getMonitoredCase(organizationId: string, monitoredCaseId: string): Promise<{ case: MonitoredCaseRecord; movements: MovementRecord[] } | null> {
+export async function getMonitoredCase(organizationId: string, monitoredCaseId: string): Promise<{ case: MonitoredCaseRecord; movements: MovementRecord[]; stj?: StjCaseRecord } | null> {
   const cases = (await listMonitoredCases(organizationId)).filter((item) => item.id === monitoredCaseId);
   if (!cases.length) return null;
   const rows = await db()`
@@ -433,6 +516,28 @@ export async function getMonitoredCase(organizationId: string, monitoredCaseId: 
       AND (${cases[0].jurisdiction} <> 'FEDERAL' OR jp.case_id = ${cases[0].caseId})
     ORDER BY COALESCE(fsd.session_date, jp.agreement_date, jp.publication_date) DESC, jp.retrieved_at DESC
   `;
+  let stj: StjCaseRecord | undefined;
+  if (cases[0].provider === "jalisco-stj-chambers") {
+    const [details, documents] = await Promise.all([
+      db()`SELECT sentence_state, origin_case_number, origin_court, judicial_district, appeal_type, proceeding, possible_sentence_at, last_attempt_at, unavailable_reason, official_search_url, official_document_count, available_document_count FROM stj_case_details WHERE judicial_case_id = ${cases[0].caseId}`,
+      db()`SELECT id, filename, document_label, kind, document_sequence, byte_size, sha256, published_at, retrieved_at FROM judicial_documents WHERE judicial_case_id = ${cases[0].caseId} AND provider = 'jalisco-stj-chambers' ORDER BY document_sequence NULLS LAST, published_at, retrieved_at`,
+    ]);
+    if (details[0]) stj = {
+      sentenceState: details[0].sentence_state,
+      originCaseNumber: details[0].origin_case_number ?? undefined,
+      originCourt: details[0].origin_court ?? undefined,
+      judicialDistrict: details[0].judicial_district ?? undefined,
+      appealType: details[0].appeal_type ?? undefined,
+      proceeding: details[0].proceeding ?? undefined,
+      possibleSentenceAt: details[0].possible_sentence_at ? isoTimestamp(details[0].possible_sentence_at) : undefined,
+      lastAttemptAt: details[0].last_attempt_at ? isoTimestamp(details[0].last_attempt_at) : undefined,
+      unavailableReason: details[0].unavailable_reason ?? undefined,
+      officialSearchUrl: details[0].official_search_url,
+      officialDocumentCount: details[0].official_document_count === null ? undefined : Number(details[0].official_document_count),
+      availableDocumentCount: Number(details[0].available_document_count ?? documents.length),
+      documents: documents.map((document) => ({ id: document.id, filename: document.filename, label: document.document_label ?? "Documento oficial", kind: document.kind, sequence: document.document_sequence === null ? undefined : Number(document.document_sequence), byteSize: Number(document.byte_size), sha256: document.sha256, publishedAt: document.published_at ? isoTimestamp(document.published_at) : undefined, retrievedAt: isoTimestamp(document.retrieved_at) })),
+    };
+  }
   return {
     case: cases[0],
     movements: rows.map((row) => ({
@@ -446,6 +551,7 @@ export async function getMonitoredCase(organizationId: string, monitoredCaseId: 
       snapshotHash: row.snapshot_hash,
       notebook: row.notebook ?? undefined,
     })),
+    ...(stj ? { stj } : {}),
   };
 }
 
@@ -474,7 +580,8 @@ export async function linkStoredPublicationsToMonitoredCase(organizationId: stri
              CASE jp.publication_kind
                WHEN 'SESSION_LISTED' THEN 'Asunto federal listado para sesión: ' || watched.case_number_normalized
                WHEN 'SESSION_RESULT' THEN 'Resultado de sesión federal: ' || watched.case_number_normalized
-               ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END || watched.case_number_normalized
+               WHEN 'STJ_JUDGMENT' THEN 'Sentencia del STJ disponible: ' || watched.case_number_normalized
+               ELSE CASE WHEN jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)' THEN 'Resolución relacionada con sentencia: ' ELSE CASE WHEN ja.jurisdiction = 'FEDERAL' THEN 'Nuevo acuerdo federal: ' ELSE 'Movimiento en ' END END || watched.case_number_normalized
              END,
              jsonb_build_object(
                'publicationId', jp.id,
@@ -491,7 +598,16 @@ export async function linkStoredPublicationsToMonitoredCase(organizationId: stri
       JOIN memberships membership ON membership.organization_id = mc.organization_id
       CROSS JOIN (VALUES ('IN_APP'), ('EMAIL')) AS delivery(channel)
       WHERE mc.id = ${monitoredCaseId} AND mc.organization_id = ${organizationId}
-        AND (delivery.channel = 'IN_APP' OR jp.publication_date >= mc.created_at::date)
+        AND (
+          delivery.channel = 'IN_APP'
+          OR (
+            jp.publication_date >= mc.created_at::date
+            AND (
+              jp.publication_kind IN ('SESSION_LISTED', 'SESSION_RESULT', 'STJ_JUDGMENT')
+              OR jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)'
+            )
+          )
+        )
       ON CONFLICT (movement_id, user_id, channel) DO NOTHING
     `;
     return movements.length;

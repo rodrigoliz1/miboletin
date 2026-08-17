@@ -13,6 +13,7 @@ import {
 } from "@phosphor-icons/react";
 import type { AssistantConversation, AssistantMessage } from "@/lib/assistant/types";
 import { resilientFetch } from "@/lib/client/resilient-fetch";
+import { AssistantMarkdown } from "@/components/assistant/assistant-markdown";
 
 type ApiResult = {
   ok: boolean;
@@ -239,10 +240,10 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
               <span><Sparkle size={22} weight="duotone" /></span>
               <h2>Hola, {firstName}.</h2>
               <p>Puedo revisar los acuerdos, alertas y listados a sesión que ya están guardados en tu espacio.</p>
-              {!configured ? <div className="assistant-config-warning"><strong>Falta conectar OpenAI.</strong><small>Agrega <code>OPENAI_API_KEY</code> en las variables del servidor para habilitar respuestas.</small></div> : <div className="assistant-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => void send(suggestion)}>{suggestion}</button>)}</div>}
+              {!configured ? <div className="assistant-config-warning"><strong>Falta conectar el Asistente.</strong><small>Agrega <code>AI_API_KEY</code> y los modelos en las variables del servidor para habilitar respuestas.</small></div> : <div className="assistant-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => void send(suggestion)}>{suggestion}</button>)}</div>}
             </div> : messages.map((item) => <article className={`assistant-message assistant-message-${item.role}`} key={item.id}>
               <span>{item.role === "assistant" ? <Sparkle size={14} weight="fill" /> : firstName.slice(0, 1).toUpperCase()}</span>
-              <div><p>{item.content}</p><time>{new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" }).format(new Date(item.createdAt))}</time></div>
+              <div>{item.role === "assistant" ? <AssistantMarkdown content={item.content} /> : <p>{item.content}</p>}<time>{new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" }).format(new Date(item.createdAt))}</time></div>
             </article>)}
             {sending && <article className="assistant-message assistant-message-assistant"><span><Sparkle size={14} weight="fill" /></span><div className="assistant-thinking"><i /><i /><i /><small>Consultando tus datos</small></div></article>}
           </div>

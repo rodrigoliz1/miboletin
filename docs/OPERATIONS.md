@@ -12,11 +12,17 @@
 
 El health check valida 32 circuitos, órganos y columnas `No`, `NEUN`, `No. Expediente`, `Fecha de Sesión` y `Resultado`. Si faltan, marca `SCHEMA_DRIFT`: conservar snapshot/error, pausar afirmaciones nuevas y actualizar sólo el parser federal. Si aparece CAPTCHA, abortar con `SOURCE_ACCESS_RESTRICTED`; no automatizarlo.
 
+## STJ Jalisco cambia HTML o protege acceso
+
+El parser exige la tabla de resultados y sus diez columnas. Ejecutar `pnpm ingest:stj --court=5 --case=125/2026 --dry-run` y comparar con `tests/fixtures/stj`. Si aparece challenge, marcar la fuente afectada; no afirmar cero movimientos. El portal de sentencias exige reCAPTCHA por diseño: `UNAVAILABLE` es un estado esperado y no autoriza eludirlo.
+
 ## Ejecución manual y backfill
 
 ```bash
 pnpm ingest:jalisco --date=2026-08-13 --court=C01 --dry-run
 pnpm ingest:jalisco --date=2026-08-13 --court=C01
+pnpm ingest:stj --court=5 --case=125/2026 --dry-run
+pnpm ingest:stj --court=5 --case=125/2026
 pnpm federal:backfill --from=2026-08-07 --to=2026-08-14 --circuit=3 --court=119 --dry-run
 pnpm federal:backfill --from=2026-08-07 --to=2026-08-14 --circuit=3 --court=119
 pnpm monitor:daily --dry-run
@@ -35,4 +41,4 @@ Crear una nueva ejecución con nueva `parserVersion`, leer el raw inmutable y es
 
 ## Notificaciones
 
-Filtrar `QUEUED` por antigüedad, revisar el evento `NOTIFICATION_QUEUED`, reintentar con idempotency key y confirmar `sent_at`. No incluir nombres completos en asuntos de email.
+Las alertas in-app se conservan para todas las resoluciones. Brevo sólo recibe listados a sesión, resultados de sesión, sentencias STJ disponibles o resoluciones cuyo extracto contenga la palabra completa “sentencia”. Filtrar `QUEUED` por antigüedad, revisar el evento, reintentar con idempotency key y confirmar `sent_at`. No incluir nombres completos en asuntos de email.

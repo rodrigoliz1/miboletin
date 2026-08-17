@@ -4,13 +4,14 @@ import { getSession } from "@/lib/security/session";
 import { createMonitoredCase } from "@/lib/product/repository";
 import { FederalProvider, inferFederalCourtType } from "@/lib/providers/federal/provider";
 import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
+import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
 import { normalizeCaseNumber } from "@/lib/domain/normalization";
 import { verifySelectionOption } from "@/lib/security/selection-token";
 import { hasActiveProductAccess } from "@/lib/billing/access";
 import { isSameOrigin } from "@/lib/security/request";
 
 const schema = z.object({
-  jurisdiction: z.enum(["JALISCO", "FEDERAL"]),
+  jurisdiction: z.enum(["JALISCO", "STJ", "FEDERAL"]),
   circuit: z.string().max(20).optional(),
   circuitLabel: z.string().trim().max(180).optional(),
   court: z.string().min(1).max(60),
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
   if (!parsed.success || !folders.success) return NextResponse.redirect(new URL("/cases/new?error=validation", request.url), 303);
   try {
     const parsedNumber = normalizeCaseNumber(parsed.data.number);
-    const courtScope = parsed.data.jurisdiction === "FEDERAL" ? `FEDERAL:${parsed.data.circuit}:court` : "JALISCO:court";
+    const courtScope = parsed.data.jurisdiction === "FEDERAL" ? `FEDERAL:${parsed.data.circuit}:court` : parsed.data.jurisdiction === "STJ" ? "STJ:court" : "JALISCO:court";
     if (!verifySelectionOption(courtScope, parsed.data.court, parsed.data.courtLabel, parsed.data.courtToken)) throw new Error("Órgano jurisdiccional no reconocido");
     if (parsed.data.jurisdiction === "FEDERAL") {
       if (!parsed.data.circuit) throw new Error("Circuito obligatorio");
@@ -47,11 +48,11 @@ export async function POST(request: Request) {
       });
       return NextResponse.redirect(new URL(`/cases/${id}?created=1`, request.url), 303);
     }
-    const provider = new JaliscoProvider();
+    const provider = parsed.data.jurisdiction === "STJ" ? new StjJaliscoProvider() : new JaliscoProvider();
     const id = await createMonitoredCase({
       organizationId: session.organizationId, userId: session.userId, jurisdiction: "JALISCO",
-      provider: provider.id, authorityName: provider.name, sourceUrl: "https://cjj.gob.mx/bulletin",
-      courtExternalId: parsed.data.court, courtName: parsed.data.courtLabel,
+      provider: provider.id, authorityName: provider.name, sourceUrl: parsed.data.jurisdiction === "STJ" ? "https://consultas.stjjalisco.gob.mx/consultas/acuerdos" : "https://cjj.gob.mx/bulletin",
+      courtExternalId: parsed.data.court, courtName: parsed.data.courtLabel, courtType: parsed.data.jurisdiction === "STJ" ? "STJ_CHAMBER" : undefined,
       caseNumber: parsed.data.number, caseType: parsed.data.caseType, folderIds: folders.data,
       label: parsed.data.label, monitorFrom: "1900-01-01",
     });

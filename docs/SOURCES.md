@@ -53,6 +53,21 @@ Prueba real: Tercer Circuito, órgano `119`, lista ordinaria de `2026-08-07`: 48
 
 La **búsqueda de acuerdos SISE** (`/SiseInternet/consulta/busquedaacuerdos.aspx`) es otra fuente y exige reCAPTCHA; no se automatiza. El provider nunca resuelve, externaliza ni evade el CAPTCHA. Los servicios de expediente electrónico requieren autenticación legítima y también quedan fuera del producto base.
 
-## Segunda instancia de Jalisco
+## Supremo Tribunal de Justicia del Estado de Jalisco
 
-El portal del Supremo Tribunal de Justicia (`https://stjjalisco.gob.mx/`) fue identificado como fuente institucional separada. En esta ejecución no se comprobó un endpoint estructurado de segunda instancia con contrato estable, por lo que no se declara cobertura y no se inventa un colector.
+| Campo | Detalle |
+|---|---|
+| Acuerdos | `https://consultas.stjjalisco.gob.mx/consultas/acuerdos` |
+| Sentencias públicas | `https://publicacionsentencias.stjjalisco.gob.mx/sentencias` |
+| Cobertura | Once Salas oficiales, consulta estricta por Sala + Toca |
+| Método de acuerdos | HTML público server-rendered; ruta paginada `page:{n}/sala:{id}/search_value:{toca}/m:0` |
+| Campos | fecha, Toca, bis, juicio/delito, tipo de apelación, juzgado y expediente de origen, materia, partido judicial, extracto |
+| Evidencia | snapshot, URL, fecha de recuperación y SHA-256 |
+| Sentencias | API pública separada; búsqueda y archivo protegidos por reCAPTCHA v3 |
+| Política | no evadir CAPTCHA; estado explícito, reintentos con backoff y enlace al portal oficial |
+
+Contrato real comprobado el **17 de agosto de 2026**: Sala `5`, Toca `125/2026`, tres acuerdos, incluido `Se dicta Sentencia, se modifica, no se condena en costas`. La fuente devolvió además expediente de origen `101/2022`, Juzgado `7`, materia Civil y apelación definitiva.
+
+El backend de sentencias publica los catálogos `/salas` y `/materias`, pero `/tocas` responde `403 {"error":"reCAPTCHA requerido"}` fuera de la interacción oficial. Mi Boletín Judicial conserva `UNAVAILABLE` como estado técnico, no lo interpreta como “sin sentencia” y no resuelve, externaliza ni evade el control. Si la autoridad habilita acceso automatizable, el flujo exige coincidencia exacta Sala + número + año, conserva todos los registros oficiales de esa combinación y valida cada archivo por URL HTTPS, `Content-Type`, tamaño máximo, firma `%PDF-` y SHA-256.
+
+Detalle completo: [integración STJ Jalisco](STJ-JALISCO.md).

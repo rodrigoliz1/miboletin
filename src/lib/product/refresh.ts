@@ -1,6 +1,8 @@
 import { runIngestion, type IngestionResult } from "@/lib/ingestion/pipeline";
 import { FederalProvider } from "@/lib/providers/federal/provider";
 import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
+import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
+import { refreshStjSentenceAvailability } from "@/lib/providers/stj/sentences";
 import { db } from "@/lib/db/client";
 import { getMonitoredCase, linkStoredPublicationsToMonitoredCase, listMonitoredCases, tryMarkMonitoredCaseChecking, updateMonitoredSourceStatus } from "@/lib/product/repository";
 import { dispatchJudicialEmails } from "@/lib/email/notifications";
@@ -38,6 +40,19 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
       // resultado. Consultar calendarios históricos por número mezclaba asuntos
       // homónimos y multiplicaba decenas de peticiones. El backfill institucional
       // sigue disponible, pero la actualización del usuario usa la ficha canónica.
+    } else if (watched.provider === "jalisco-stj-chambers") {
+      const provider = new StjJaliscoProvider();
+      results.push(await runIngestion(provider, {
+        date: dateInMexicoCity(),
+        courtExternalId: watched.courtExternalId,
+        caseNumber: watched.number,
+      }));
+      await linkStoredPublicationsToMonitoredCase(organizationId, monitoredCaseId);
+      const [due] = await db()`SELECT judicial_case_id FROM stj_case_details WHERE judicial_case_id = ${watched.caseId} AND sentence_state IN ('PENDING_PUBLICATION', 'PARTIAL', 'NOT_FOUND', 'UNAVAILABLE', 'ERROR') AND (next_retry_at IS NULL OR next_retry_at <= now())`;
+      if (due) {
+        try { await refreshStjSentenceAvailability(watched.caseId); }
+        catch (error) { console.error("STJ judgment availability check failed without invalidating agreements", { caseId: watched.caseId, error }); }
+      }
     } else {
       const provider = new JaliscoProvider();
       results.push(await runIngestion(provider, {

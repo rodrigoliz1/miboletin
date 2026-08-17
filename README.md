@@ -5,6 +5,7 @@ Plataforma de monitoreo judicial para litigantes y despachos. Permite registrar 
 ## Cobertura real
 
 - Jalisco: búsqueda y vigilancia por órgano + expediente en 194 órganos de cinco familias del Consejo de la Judicatura.
+- STJ Jalisco: acuerdos históricos por Sala + Toca en las once Salas, datos de origen y detección verificable de sentencia.
 - Federal: acuerdos por expediente desde la ficha pública SISE y, para órganos colegiados, listas a sesión, fecha programada, resultado y sentido. El catálogo vivo combina todos los órganos de los 32 circuitos.
 - No cubierto: el expediente electrónico autenticado. La búsqueda general SISE con reCAPTCHA no se automatiza; se usa la ficha pública directa del asunto, sin eludir controles.
 
@@ -30,9 +31,11 @@ pnpm db:migrate
 pnpm dev
 ```
 
-Completa `.env.local` con `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET` y `CRON_SECRET`. Para probar cobros y correos agrega también las variables `STRIPE_*`, `BREVO_*` y `OPENAI_*` de `.env.example`. Los comandos CLI cargan ese archivo automáticamente; ya no es necesario ejecutar `export` en cada terminal. Después de migrar, abre `http://localhost:3000/register`; el alta crea la organización y una carpeta General, envía el OTP y conserva la sesión. Una vez verificado el correo, el usuario llega al dashboard y contrata desde el bloqueo de suscripción. En desarrollo, si Stripe no está configurado, se permite el acceso local para que puedas probar el producto; en producción Stripe es obligatorio para activar una cuenta.
+Completa `.env.local` con `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET` y `CRON_SECRET`. Para probar cobros y correos agrega también las variables `STRIPE_*`, `BREVO_*` y `AI_*` de `.env.example`. Los comandos CLI cargan ese archivo automáticamente; ya no es necesario ejecutar `export` en cada terminal. Después de migrar, abre `http://localhost:3000/register`; el alta crea la organización y una carpeta General, envía el OTP y conserva la sesión. Una vez verificado el correo, el usuario llega al dashboard y contrata desde el bloqueo de suscripción. En desarrollo, si Stripe no está configurado, se permite el acceso local para que puedas probar el producto; en producción Stripe es obligatorio para activar una cuenta.
 
-La clave de OpenAI es exclusivamente de servidor. Nunca uses una variable `NEXT_PUBLIC_OPENAI_API_KEY` ni la incluyas en Git. Si se omite, la aplicación sigue funcionando y el panel explica que el asistente está pendiente de configuración.
+Las sentencias validadas usan Vercel Blob privado en producción (`BLOB_READ_WRITE_TOKEN`). En localhost no necesitas esa variable: los documentos se guardan en `.data/judicial-documents`, directorio ignorado por Git.
+
+La clave del gateway del Asistente es exclusivamente de servidor. Nunca uses una variable `NEXT_PUBLIC_AI_API_KEY` ni la incluyas en Git. Si se omite, la aplicación sigue funcionando y el panel explica que el Asistente está pendiente de configuración.
 
 Para recibir eventos de Stripe durante el desarrollo instala su CLI y reenvía el webhook:
 
@@ -79,6 +82,12 @@ Consulta federal directa de acuerdos por expediente:
 pnpm ingest:federal --mode=agreement --court=119 --circuit=3 --case=461/2024 --type="Amparo Directo" --dry-run
 ```
 
+Consulta de un Toca en Sala del STJ Jalisco:
+
+```bash
+pnpm ingest:stj --court=5 --case=125/2026 --dry-run
+```
+
 Backfill federal de un órgano o de todos los órganos de un circuito:
 
 ```bash
@@ -111,8 +120,11 @@ El botón inferior derecho abre conversaciones privadas del usuario. Las respues
 Variables:
 
 ```bash
-OPENAI_API_KEY="sk-..."
-OPENAI_MODEL="gpt-5.6-terra"
+AI_API_KEY="..."
+AI_BASE_URL="https://tokease.com/v1"
+AI_MODEL_FAST="..."
+AI_MODEL_PRO="..."
+AI_MODEL_PREMIUM="..."
 ```
 
 El servidor limita cada mensaje a 4,000 caracteres, conserva como máximo 12 turnos recientes para continuidad y aplica un límite persistente de 12 preguntas por minuto por usuario.
@@ -122,6 +134,8 @@ El servidor limita cada mensaje a 4,000 caracteres, conserva como máximo 12 tur
 `STRIPE_PRICE_ID` debe apuntar a un precio recurrente mensual de **49900 centavos MXN**. Checkout recopila el método de pago; los webhooks son la fuente de verdad que activa, renueva, bloquea o cancela el acceso. El perfil abre el portal alojado de Stripe, por lo que la aplicación nunca recibe números de tarjeta.
 
 En Brevo verifica `miboletin.lat` y el remitente definido en `BREVO_SENDER_EMAIL`. Se envían códigos OTP de registro y recuperación de contraseña, así como correos de bienvenida, pago confirmado, pago fallido y cancelación; el registro evita duplicados por evento.
+
+Los avisos judiciales por correo se reservan para eventos importantes: listado a sesión, resultado de sesión, sentencia pública del STJ o resolución cuyo extracto contenga “sentencia”. Los demás acuerdos sólo aparecen como alertas dentro de la aplicación. `billing:retention` envía avisos diarios durante los últimos tres días sólo cuando la recurrencia ya no está activa, y una campaña semanal idempotente tras el vencimiento.
 
 ## Verificación
 
@@ -149,6 +163,9 @@ pnpm test:e2e
 
 - [Investigación de la fuente federal](docs/FEDERAL-SOURCE-RESEARCH.md)
 - [Operación federal](docs/FEDERAL.md)
+- [Integración de Salas del STJ Jalisco](docs/STJ-JALISCO.md)
+- [Operación del Asistente](docs/ASSISTANT-AI.md)
+- [Correos de continuidad de suscripción](docs/SUBSCRIPTION-RETENTION.md)
 - [Informe de implementación](FEDERAL_IMPLEMENTATION_REPORT.md)
 - [Fuentes oficiales](docs/SOURCES.md)
 - [Arquitectura](docs/ARCHITECTURE.md)

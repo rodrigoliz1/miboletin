@@ -15,14 +15,17 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "ingest:jalisco": "tsx scripts/ingest.ts jalisco",
+    "ingest:stj": "tsx scripts/ingest.ts stj",
     "ingest:federal": "tsx scripts/ingest.ts federal",
     "federal:backfill": "tsx scripts/federal-backfill.ts",
     "monitor:daily": "NODE_OPTIONS=--conditions=react-server tsx scripts/monitor-active.ts",
+    "billing:retention": "NODE_OPTIONS=--conditions=react-server tsx scripts/billing-retention.ts",
     "health:sources": "tsx scripts/health.ts"
   },
   "dependencies": {
     "@next/env": "16.3.0",
     "@phosphor-icons/react": "^2.1.10",
+    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",
     "jose": "^6.2.8",
@@ -34,6 +37,8 @@
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "server-only": "^0.0.1",
     "stripe": "^22.5.0",
     "zod": "^4.4.3"

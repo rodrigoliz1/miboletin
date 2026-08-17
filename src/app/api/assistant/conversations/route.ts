@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/security/session";
 import { createAssistantConversation, listAssistantConversations } from "@/lib/assistant/repository";
 import { hasActiveProductAccess } from "@/lib/billing/access";
+import { isAiConfigured } from "@/lib/ai/config";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function GET() {
   if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   try {
     const conversations = await listAssistantConversations(session.organizationId, session.userId);
-    return NextResponse.json({ ok: true, conversations, configured: Boolean(process.env.OPENAI_API_KEY?.trim()) });
+    return NextResponse.json({ ok: true, conversations, configured: isAiConfigured() });
   } catch (error) {
     console.error("Assistant conversations could not be listed", error);
     return NextResponse.json({ ok: false, error: "No fue posible cargar las conversaciones." }, { status: 500 });

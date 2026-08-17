@@ -8,6 +8,7 @@ import { SearchableSelect, type SearchableSelectOption } from "@/components/sear
 import { SearchableMultiSelect } from "@/components/searchable-multi-select";
 import { FederalCaseSelection, type FederalCourtType } from "@/components/federal-case-selection";
 import { signSelectionOption } from "@/lib/security/selection-token";
+import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
 
 export const dynamic = "force-dynamic";
 
@@ -34,29 +35,31 @@ export default async function NewCasePage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const session = await getSession();
   if (!session) return null;
-  const jurisdiction = params.jurisdiction === "FEDERAL" ? "FEDERAL" : "JALISCO";
+  const jurisdiction = params.jurisdiction === "FEDERAL" ? "FEDERAL" : params.jurisdiction === "STJ" ? "STJ" : "JALISCO";
   const federal = new FederalProvider();
+  const stj = new StjJaliscoProvider();
   const circuits = jurisdiction === "FEDERAL" ? await federal.getCircuits() : [];
   const selectedCircuit = params.circuit ?? "3";
-  const [folders, jaliscoCourts, federalCourts] = await Promise.all([
+  const [folders, jaliscoCourts, federalCourts, stjCourts] = await Promise.all([
     listFolders(session.organizationId),
     jurisdiction === "JALISCO" ? new JaliscoProvider().fetchCatalogs() : Promise.resolve([]),
     jurisdiction === "FEDERAL" ? federal.getCourts(selectedCircuit) : Promise.resolve([]),
+    jurisdiction === "STJ" ? stj.fetchCatalogs() : Promise.resolve([]),
   ]);
   return <div className="content">
     <div className="page-heading"><div><h1>Agregar asunto real</h1><p>El alta se guarda en PostgreSQL y queda vinculada al identificador oficial del órgano.</p></div></div>
-    <div className="jurisdiction-tabs"><Link data-active={jurisdiction === "JALISCO"} href="/cases/new?jurisdiction=JALISCO">Jalisco</Link><Link data-active={jurisdiction === "FEDERAL"} href="/cases/new?jurisdiction=FEDERAL&circuit=3">Federal · Acuerdos y sesiones</Link></div>
+    <div className="jurisdiction-tabs"><Link data-active={jurisdiction === "JALISCO"} href="/cases/new?jurisdiction=JALISCO">Juzgados de Jalisco</Link><Link data-active={jurisdiction === "STJ"} href="/cases/new?jurisdiction=STJ">Salas del STJ</Link><Link data-active={jurisdiction === "FEDERAL"} href="/cases/new?jurisdiction=FEDERAL&circuit=3">Federal</Link></div>
     {jurisdiction === "FEDERAL" && <form className="panel catalog-picker" action="/cases/new"><input type="hidden" name="jurisdiction" value="FEDERAL" /><SearchableSelect name="circuit" label="Circuito" options={circuits.map((circuit) => ({ value: circuit.externalId, label: circuit.name, group: "Circuitos federales", description: `Circuito ${circuit.externalId}` }))} defaultValue={selectedCircuit} required searchPlaceholder="Buscar circuito por nombre o número…" /><button className="button button-secondary" type="submit">Cargar tribunales</button></form>}
     <div style={{ maxWidth: 860 }}>
       {params.error && <p className="form-error">{params.error === "source" ? "No fue posible validar el órgano o guardar el asunto. La fuente no se marcará como verificada." : "Revisa los campos del expediente."}</p>}
       <form className="panel case-create-form" action="/api/cases" method="post">
         <input type="hidden" name="jurisdiction" value={jurisdiction} />
         {jurisdiction === "FEDERAL" && <><input type="hidden" name="circuit" value={selectedCircuit} /><input type="hidden" name="circuitLabel" value={circuits.find((circuit) => circuit.externalId === selectedCircuit)?.name ?? `Circuito ${selectedCircuit}`} /></>}
-        {jurisdiction === "FEDERAL" ? <FederalCaseSelection courts={courtOptions(federalCourts, `FEDERAL:${selectedCircuit}:court`).map((option) => ({ ...option, courtType: (federalCourts.find((court) => court.externalId === option.value)?.courtType ?? "OTHER") as FederalCourtType }))} /> : <SearchableSelect name="court" label="Órgano jurisdiccional" options={courtOptions(jaliscoCourts, "JALISCO:court")} required searchPlaceholder="Buscar por nombre, materia, municipio o clave…" hint="Órganos divididos por materia y conectados al boletín oficial." />}
-        <div className="form-grid"><div className="field"><label htmlFor="number">Número de expediente</label><input id="number" name="number" placeholder="461/2024" required /></div>{jurisdiction === "JALISCO" && <div className="field"><label htmlFor="caseType">Tipo de asunto</label><input id="caseType" name="caseType" placeholder="Civil ordinario" required /></div>}</div>
+        {jurisdiction === "FEDERAL" ? <FederalCaseSelection courts={courtOptions(federalCourts, `FEDERAL:${selectedCircuit}:court`).map((option) => ({ ...option, courtType: (federalCourts.find((court) => court.externalId === option.value)?.courtType ?? "OTHER") as FederalCourtType }))} /> : <SearchableSelect name="court" label={jurisdiction === "STJ" ? "Sala" : "Órgano jurisdiccional"} options={courtOptions(jurisdiction === "STJ" ? stjCourts : jaliscoCourts, jurisdiction === "STJ" ? "STJ:court" : "JALISCO:court")} required searchPlaceholder={jurisdiction === "STJ" ? "Buscar Sala por número o materia…" : "Buscar por nombre, materia, municipio o clave…"} hint={jurisdiction === "STJ" ? "Once Salas oficiales, ordenadas por materia." : "Órganos divididos por materia y conectados al boletín oficial."} />}
+        <div className="form-grid"><div className="field"><label htmlFor="number">{jurisdiction === "STJ" ? "Número de Toca" : "Número de expediente"}</label><input id="number" name="number" placeholder={jurisdiction === "STJ" ? "125/2026" : "461/2024"} required /></div>{jurisdiction === "JALISCO" && <div className="field"><label htmlFor="caseType">Tipo de asunto</label><input id="caseType" name="caseType" placeholder="Civil ordinario" required /></div>}{jurisdiction === "STJ" && <input type="hidden" name="caseType" value="Toca" />}</div>
         <SearchableMultiSelect name="folders" label="Carpetas" options={folders.map((folder) => ({ value: folder.id, label: folder.name, group: "Carpetas del despacho", description: `${folder.caseCount} ${folder.caseCount === 1 ? "asunto" : "asuntos"}` }))} defaultValues={folders[0] ? [folders[0].id] : []} required searchPlaceholder="Buscar carpeta…" hint="Puedes guardar el mismo asunto en varias carpetas sin duplicar su vigilancia." />
         <div className="field"><label htmlFor="label">Referencia interna opcional</label><input id="label" name="label" placeholder="Cliente o nombre interno del asunto" /></div>
-        <div className="source-scope"><strong>{jurisdiction === "FEDERAL" ? "Histórico federal automático" : "Historial completo del boletín"}</strong><p>{jurisdiction === "FEDERAL" ? "No necesitas indicar fechas. Primero recuperamos los acuerdos oficiales del expediente y, si corresponde a un órgano de sesión, revisamos cuándo se listó, la fecha programada y el sentido publicado." : "No necesitas indicar fechas. Consultaremos por órgano y expediente y conservaremos todos los extractos que entregue el boletín oficial."}</p></div>
+        <div className="source-scope"><strong>{jurisdiction === "FEDERAL" ? "Histórico federal automático" : jurisdiction === "STJ" ? "Histórico de Sala y vigilancia de sentencia" : "Historial completo del boletín"}</strong><p>{jurisdiction === "FEDERAL" ? "No necesitas indicar fechas. Primero recuperamos los acuerdos oficiales del expediente y, si corresponde a un órgano de sesión, revisamos cuándo se listó, la fecha programada y el sentido publicado." : jurisdiction === "STJ" ? "Consultaremos la Sala y el Toca exactos, conservaremos sus acuerdos y detectaremos señales de sentencia. La descarga sólo se habilita después de validar un PDF oficial." : "No necesitas indicar fechas. Consultaremos por órgano y expediente y conservaremos todos los extractos que entregue el boletín oficial."}</p></div>
         <div className="form-actions"><Link className="button button-secondary" href="/cases">Cancelar</Link><button className="button button-primary" type="submit">Guardar y comenzar vigilancia</button></div>
       </form>
     </div>

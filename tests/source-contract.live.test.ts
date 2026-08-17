@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
 import { FederalProvider } from "@/lib/providers/federal/provider";
+import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
 
 describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jalisco", () => {
   it("mantiene los cinco catálogos y sus campos esenciales", async () => {
@@ -23,6 +24,21 @@ describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jali
     expect(result.records.length).toBeGreaterThan(0);
     expect(result.records[0].courtExternalId).toBe(court);
     expect(result.records[0].officialText.length).toBeGreaterThan(5);
+  }, 30_000);
+});
+
+describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Salas del STJ Jalisco", () => {
+  it("mantiene las once Salas y consulta estrictamente un Toca real", async () => {
+    const provider = new StjJaliscoProvider();
+    expect(await provider.fetchCatalogs()).toHaveLength(11);
+    const result = await provider.searchCase("125/2026", "5");
+    expect(result.records).toHaveLength(3);
+    expect(result.records.every((record) => record.courtExternalId === "5" && record.caseNumberRaw === "125/2026")).toBe(true);
+    expect(result.records.some((record) => /Se dicta Sentencia/i.test(record.officialText))).toBe(true);
+  }, 30_000);
+
+  it("declara la protección interactiva del portal de sentencias sin evadirla", async () => {
+    expect(await new StjJaliscoProvider().probeJudgmentSearchAccess()).toBe("RECAPTCHA_REQUIRED");
   }, 30_000);
 });
 

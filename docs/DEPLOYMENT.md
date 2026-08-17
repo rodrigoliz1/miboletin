@@ -5,6 +5,7 @@
 - GitHub como origen.
 - Vercel para Next.js.
 - Neon PostgreSQL en la misma región.
+- Vercel Blob privado para versiones públicas de sentencias.
 - GitHub Actions (`.github/workflows/monitor.yml`) como worker inicial para `monitor:daily`.
 - Un worker persistente (Render, Fly.io o equivalente) cuando el volumen ya no quepa cómodamente en una ejecución programada.
 
@@ -19,7 +20,7 @@
 7. Ejecutar un backfill federal acotado con `--dry-run`, revisar el snapshot y después persistirlo.
 8. Registrar una cuenta de staging, un expediente federal controlado y comprobar DB -> matching -> alerta -> UI antes de habilitar notificaciones de producción.
 
-Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y `BREVO_SENDER_NAME`. Para el Asistente: `OPENAI_API_KEY` y `OPENAI_MODEL`. Recomendadas: `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
+Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` y `BLOB_READ_WRITE_TOKEN`. Para el Asistente: `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL_FAST`, `AI_MODEL_PRO` y `AI_MODEL_PREMIUM`. Recomendadas: `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
 
 No ejecutar ingestión masiva desde funciones serverless con timeout. Los jobs deben ser reentrantes e idempotentes.
 
@@ -50,19 +51,22 @@ No continúes si `git status` muestra `.env.local`, claves `sk-...`, contraseña
 - `SOURCE_USER_AGENT`: nombre y contacto operativo de la aplicación.
 - `APP_URL`: dominio HTTPS definitivo.
 - `BREVO_API_KEY` y `BREVO_SENDER_EMAIL`: necesarios para que el worker entregue avisos judiciales por correo.
+- `BLOB_READ_WRITE_TOKEN`: acceso de escritura al Blob privado para que el worker archive una sentencia oficial sin exponer su URL.
 
 Después, en Vercel:
 
 1. **Add New → Project**, importa el repositorio privado y conserva el preset Next.js.
 2. Configura `DATABASE_URL` con la cadena **pooled** de Neon (`-pooler` en el host) para Preview y Production.
-3. Agrega todas las variables obligatorias indicadas arriba, además de `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-5.6-terra`, `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT` y `FEDERAL_SESSION_BASE`.
-4. Ejecuta `pnpm db:migrate` una vez contra la base de producción antes de aceptar usuarios.
-5. Despliega; actualiza `APP_URL` al dominio definitivo y vuelve a desplegar.
-6. En Stripe crea un producto con un precio recurrente mensual de **$499 MXN** y copia su identificador `price_...` a `STRIPE_PRICE_ID`.
-7. En Stripe Workbench registra `https://TU-DOMINIO/api/billing/webhook`; escucha `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`. Copia el secreto de firma a `STRIPE_WEBHOOK_SECRET`.
-8. Activa en Stripe Customer Portal la actualización del método de pago y la cancelación al final del periodo.
-9. En Brevo autentica el dominio, verifica el remitente y crea una clave transaccional con el menor alcance necesario.
-10. Comprueba registro → OTP → dashboard bloqueado → Checkout → retorno automático al dashboard habilitado, correo de confirmación, portal de facturación, renovación, bloqueo por vencimiento, alta/borrado de expediente, carpetas múltiples, filtros, conversaciones y una pregunta de prueba.
+3. En **Storage**, crea un Vercel Blob con acceso **Private** y conéctalo al proyecto. Vercel agregará `BLOB_READ_WRITE_TOKEN`.
+4. Agrega las demás variables obligatorias indicadas arriba, incluidos los cinco valores `AI_*` del Asistente, además de `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT` y `FEDERAL_SESSION_BASE`. Los nombres concretos de modelo se administran únicamente en Vercel.
+5. Ejecuta `pnpm db:migrate` una vez contra la base de producción antes de aceptar usuarios.
+6. Despliega; actualiza `APP_URL` al dominio definitivo y vuelve a desplegar.
+7. En Stripe crea un producto con un precio recurrente mensual de **$499 MXN** y copia su identificador `price_...` a `STRIPE_PRICE_ID`.
+8. En Stripe Workbench registra `https://TU-DOMINIO/api/billing/webhook`; escucha `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`. Copia el secreto de firma a `STRIPE_WEBHOOK_SECRET`.
+9. Activa en Stripe Customer Portal la actualización del método de pago y la cancelación al final del periodo.
+10. En Brevo autentica el dominio, verifica el remitente y crea una clave transaccional con el menor alcance necesario.
+11. Activa también el workflow **Continuidad de suscripción** y comprueba que una ejecución manual no envíe correo a una suscripción recurrente activa.
+12. Comprueba registro → OTP → dashboard bloqueado → Checkout → retorno automático al dashboard habilitado, correo de confirmación, portal de facturación, renovación, bloqueo por vencimiento, alta/borrado de expediente, carpetas múltiples, filtros, conversaciones y una pregunta de prueba.
 
 Para desplegar también desde la terminal:
 

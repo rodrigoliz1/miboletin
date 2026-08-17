@@ -50,6 +50,23 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await expect(page.getByText("Resolución publicada").first()).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/20 publicaciones/)).toBeVisible();
   await expect(page.getByText("General · Amparos estratégicos")).toBeVisible();
+  await page.getByRole("button", { name: "Gestionar carpetas" }).click();
+  const folderDialog = page.getByRole("dialog", { name: /¿En qué carpetas quieres mostrar 1511\/2025/i });
+  await expect(folderDialog).toBeVisible();
+  await folderDialog.getByText("General", { exact: true }).click();
+  await folderDialog.getByRole("button", { name: "Guardar carpetas" }).click();
+  await expect(page.getByText("Carpetas: Amparos estratégicos")).toBeVisible({ timeout: 15_000 });
+  await page.goto("/cases");
+  const watchedRow = page.getByRole("row").filter({ hasText: "1511/2025" });
+  await expect(watchedRow).toHaveAttribute("draggable", "true");
+  if (testInfo.project.name === "desktop-chromium") {
+    await watchedRow.dragTo(page.getByRole("link", { name: /^General/ }));
+    const dragDialog = page.getByRole("dialog", { name: /¿En qué carpetas quieres mostrar 1511\/2025/i });
+    await expect(dragDialog).toBeVisible();
+    await dragDialog.getByRole("button", { name: "Guardar carpetas" }).click();
+    await expect(watchedRow.getByRole("button", { name: /General · Amparos estratégicos/ })).toBeVisible({ timeout: 15_000 });
+  }
+  await page.goto(localCaseUrl);
   await expect(page.getByRole("link", { name: /Contrastar en la fuente oficial/i })).toHaveCount(0);
 
   const emptyFolderResponse = await page.goto("/dashboard?from=2025-01-01&to=2026-12-31&folder=");
@@ -80,7 +97,9 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   const longMessages = Array.from({ length: 36 }, (_, index) => ({
     id: `message-${index}`,
     role: index % 2 ? "assistant" : "user",
-    content: index === 17
+    content: index === 35
+      ? "Mensaje 36.\n\n**20 resoluciones publicadas**\n\n| Expediente | Órgano |\n| --- | --- |\n| 527/2025 | Quinto Tribunal Colegiado |"
+      : index === 17
       ? `Texto oficial extenso ${"EXPEDIENTE-SIN-ESPACIOS-".repeat(22)}`
       : `Mensaje ${index + 1}. Revisión del expediente y sus publicaciones oficiales.`,
     createdAt: now,
@@ -101,6 +120,8 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   const assistantDrawer = page.getByRole("dialog", { name: "Asistente de Mi Boletín" });
   const messageViewport = page.getByRole("log", { name: "Mensajes de la conversación" });
   await expect(page.getByText("Mensaje 36.")).toBeVisible({ timeout: 15_000 });
+  await expect(assistantDrawer.getByText("20 resoluciones publicadas")).toHaveJSProperty("tagName", "STRONG");
+  await expect(assistantDrawer.getByRole("table")).toBeVisible();
   const drawerBeforeScroll = await assistantDrawer.boundingBox();
   const overflow = await messageViewport.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY }));
   expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
@@ -138,6 +159,29 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(page).toHaveURL(/\/login$/);
 
+});
+
+test("búsqueda y alta real de un Toca del STJ Jalisco", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const email = `stj-${testInfo.project.name}-${Date.now()}@example.test`;
+  await page.goto("/register");
+  await page.getByLabel("Nombre completo").fill("Auditoría STJ");
+  await page.getByLabel("Despacho u organización").fill("Despacho Segunda Instancia");
+  await page.getByLabel("Correo electrónico").fill(email);
+  await page.getByLabel("Contraseña").fill("Auditoria!2026");
+  await page.getByRole("button", { name: "Crear cuenta y verificar correo" }).click();
+  await page.getByLabel("Código de verificación").fill("123456");
+  await page.getByRole("button", { name: "Verificar y continuar" }).click();
+  await page.goto("/search?scope=STJ&court=5&q=125%2F2026");
+  await expect(page.getByRole("heading", { name: "125/2026" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".search-result-count")).toContainText("3");
+  await expect(page.locator(".search-result-count")).toContainText("resoluciones");
+  await page.getByRole("button", { name: "Agregar a seguimiento" }).click();
+  await expect(page).toHaveURL(/\/cases\/[0-9a-f-]+\?created=1$/);
+  await expect(page.getByText("STJ JALISCO · ACUERDOS DE SALA")).toBeVisible();
+  await expect(page.getByText("Se dicta Sentencia, se modifica, no se condena en costas")).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("SENTENCIA PÚBLICA")).toHaveCount(0);
+  await expect(page.getByText("Revisión parcial")).toHaveCount(0);
 });
 
 test("recuperación de contraseña con OTP e invalidación segura", async ({ page }, testInfo) => {

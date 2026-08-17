@@ -3,6 +3,7 @@ import { createMonitoredCase, listFolders } from "@/lib/product/repository";
 import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
 import { FederalProvider, supportsFederalCaseType, type FederalCircuit, type FederalCourt } from "@/lib/providers/federal/provider";
 import { bestNamed, inferAssistantJurisdiction, matchNamed } from "@/lib/assistant/named-match";
+import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
 
 export interface AddCaseAction {
   folder_name: string;
@@ -55,6 +56,18 @@ export async function executeAddCaseAction(input: { organizationId: string; user
   if (!folder) throw new Error(`No encontré una carpeta inequívoca llamada “${input.action.folder_name}”.`);
   const jurisdiction = inferAssistantJurisdiction(input.action.court_name, input.action.jurisdiction);
   if (jurisdiction === "JALISCO") {
+    if (/\bsala\s+especializada\b/i.test(input.action.court_name)) {
+      const stj = new StjJaliscoProvider();
+      const chamber = bestNamed(await stj.fetchCatalogs(), input.action.court_name);
+      if (!chamber) throw new Error("No encontré una única Sala del STJ que coincida con el nombre indicado.");
+      const id = await createMonitoredCase({
+        organizationId: input.organizationId, userId: input.userId, jurisdiction, provider: stj.id,
+        authorityName: stj.name, sourceUrl: "https://consultas.stjjalisco.gob.mx/consultas/acuerdos",
+        courtExternalId: chamber.externalId, courtName: chamber.name, courtType: "STJ_CHAMBER",
+        caseNumber: input.action.case_number, caseType: "Toca", folderIds: [folder.id], monitorFrom: "1900-01-01",
+      });
+      return { id, caseNumber: input.action.case_number, courtName: chamber.name, folderName: folder.name };
+    }
     const provider = new JaliscoProvider();
     const court = bestNamed(await provider.fetchCatalogs(), input.action.court_name);
     if (!court) throw new Error("No encontré un único órgano local que coincida con el nombre indicado.");

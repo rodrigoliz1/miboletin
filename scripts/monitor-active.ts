@@ -3,6 +3,8 @@ import { runIngestion } from "../src/lib/ingestion/pipeline";
 import { refreshMonitoredCase } from "../src/lib/product/refresh";
 import { FederalProvider, isFederalSessionCourt } from "../src/lib/providers/federal/provider";
 import { JaliscoProvider } from "../src/lib/providers/jalisco/provider";
+import { StjJaliscoProvider } from "../src/lib/providers/stj/provider";
+import { refreshDueStjSentences } from "../src/lib/providers/stj/sentences";
 import { closeDb, db } from "../src/lib/db/client";
 import { dateInMexicoCity } from "../src/lib/product/query";
 
@@ -15,11 +17,12 @@ interface ActiveCase {
   circuitId?: string;
   caseNumber: string;
   caseType: string;
+  provider: string;
 }
 
 async function activeCases(): Promise<ActiveCase[]> {
   const rows = await db()`
-    SELECT mc.id, mc.organization_id, ja.jurisdiction, c.external_id AS court_external_id,
+    SELECT mc.id, mc.organization_id, ja.jurisdiction, ja.code AS provider, c.external_id AS court_external_id,
            c.court_type, cir.external_id AS circuit_id, jc.case_number_normalized, jc.case_type
     FROM monitored_cases mc
     JOIN judicial_cases jc ON jc.id = mc.case_id
@@ -27,11 +30,11 @@ async function activeCases(): Promise<ActiveCase[]> {
     JOIN courts c ON c.id = jc.court_id
     LEFT JOIN judicial_circuits cir ON cir.id = c.circuit_id
     WHERE mc.active AND mc.organization_id IS NOT NULL
-      AND ja.code IN ('jalisco-cjj', 'federal-pjf-session-lists')
+      AND ja.code IN ('jalisco-cjj', 'jalisco-stj-chambers', 'federal-pjf-session-lists')
     ORDER BY ja.jurisdiction, c.external_id, jc.case_number_normalized
   `;
   return rows.map((row) => ({
-    id: row.id, organizationId: row.organization_id, jurisdiction: row.jurisdiction,
+    id: row.id, organizationId: row.organization_id, jurisdiction: row.jurisdiction, provider: row.provider,
     courtExternalId: row.court_external_id, courtType: row.court_type ?? undefined,
     circuitId: row.circuit_id ?? undefined, caseNumber: row.case_number_normalized, caseType: row.case_type,
   }));
@@ -39,7 +42,8 @@ async function activeCases(): Promise<ActiveCase[]> {
 
 async function dryRunCase(item: ActiveCase, today: string) {
   if (item.jurisdiction === "JALISCO") {
-    return [await runIngestion(new JaliscoProvider(), { date: today, courtExternalId: item.courtExternalId, caseNumber: item.caseNumber }, true)];
+    const provider = item.provider === "jalisco-stj-chambers" ? new StjJaliscoProvider() : new JaliscoProvider();
+    return [await runIngestion(provider, { date: today, courtExternalId: item.courtExternalId, caseNumber: item.caseNumber }, true)];
   }
   if (!item.circuitId) throw new Error("Circuito federal ausente");
   const provider = new FederalProvider();
@@ -77,6 +81,7 @@ async function main() {
     else succeeded += 1;
     console.log(JSON.stringify({ monitoredCaseId: item.id, court: item.courtExternalId, caseNumber: item.caseNumber, status: errors.length ? "failed" : "succeeded", runs: results.length, fetched: caseFetched, errors }));
   }
+  if (!dryRun) await refreshDueStjSentences(20);
   console.log(JSON.stringify({ status: failed ? "partial" : "completed", casesAttempted: cases.length, casesSuccessful: succeeded, casesFailed: failed, fetched, dryRun }));
   await closeDb();
   if (failed) process.exitCode = 2;

@@ -10,6 +10,7 @@
 - Organización en cada relación privada; las consultas de producción deben filtrar por `organization_id` derivado de sesión.
 - Snapshots con hash, audit logs y eventos de dominio.
 - User-Agent identificable, timeout y baja concurrencia hacia autoridades.
+- Sentencias en Blob privado; la URL de objeto no llega al navegador. `/api/documents/[id]` vuelve a validar sesión, suscripción y pertenencia de organización antes de transmitir el stream.
 
 ## Auditoría de amenazas
 

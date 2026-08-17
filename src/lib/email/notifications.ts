@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db/client";
 import { sendTransactionalEmail } from "@/lib/email/brevo";
+import { importantJudicialEventTitle, isImportantJudicialEvent } from "@/lib/product/important-judicial-event";
 
 export async function dispatchJudicialEmails(organizationId: string, monitoredCaseId?: string) {
   if (!process.env.BREVO_API_KEY?.trim() || !process.env.BREVO_SENDER_EMAIL?.trim()) return { sent: 0, failed: 0 };
@@ -28,7 +29,11 @@ export async function dispatchJudicialEmails(organizationId: string, monitoredCa
   let failed = 0;
   for (const row of rows) {
     const kind = String(row.publication_kind);
-    const title = kind === "SESSION_LISTED" ? "Tu asunto fue listado para sesión" : kind === "SESSION_RESULT" ? "Se publicó el resultado de sesión" : "Se publicó una nueva resolución";
+    if (!isImportantJudicialEvent(kind, String(row.official_text ?? ""))) {
+      await db()`DELETE FROM notifications WHERE id = ${row.id} AND channel = 'EMAIL' AND status = 'QUEUED'`;
+      continue;
+    }
+    const title = importantJudicialEventTitle(kind, String(row.official_text ?? ""));
     const extract = String(row.official_text ?? "").replace(/\s+/g, " ").trim().slice(0, 700);
     const body = `${row.case_number_normalized} · ${row.court_name}. Publicación: ${row.publication_date}. ${extract}`;
     try {
