@@ -69,8 +69,10 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
       setActiveId(id);
       setMessages(result.messages ?? []);
       setHistoryOpen(false);
+      return result.messages ?? [];
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No fue posible abrir la conversación");
+      return null;
     } finally {
       setLoading(false);
     }
@@ -171,9 +173,12 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
         setConversations((current) => [result.conversation!, ...current.filter((item) => item.id !== result.conversation!.id)]);
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No fue posible responder");
-      await loadConversation(conversationId);
-      setInput(content);
+      const recovered = await loadConversation(conversationId);
+      const persisted = recovered?.some((item) => item.role === "user" && item.content.trim() === content);
+      if (!persisted) {
+        setError(reason instanceof Error ? reason.message : "No fue posible responder");
+        setInput(content);
+      }
     } finally {
       setSending(false);
       inputRef.current?.focus();

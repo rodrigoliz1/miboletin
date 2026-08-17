@@ -14,7 +14,8 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   const email = `audit-${testInfo.project.name}-${Date.now()}@example.test`;
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Tus asuntos. Revisados a diario." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "El boletín, bajo control." })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Solicitar información por WhatsApp" })).toHaveAttribute("href", /wa\.me\/526692122543/);
   await page.goto("/register");
   await page.getByLabel("Nombre completo").fill("Auditoría Codex");
   await page.getByLabel("Despacho u organización").fill("Despacho de Prueba");
@@ -81,6 +82,8 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await page.getByRole("textbox", { name: /Buscar órgano jurisdiccional/i }).fill("quinto mercantil");
   await expect(page.getByRole("option", { name: /Juzgado Quinto de lo Mercantil/i }).first()).toBeVisible();
   await expect(page.locator("select")).toHaveCount(0);
+  await page.goto("/courts");
+  await expect(page.getByRole("link", { name: /Consultar expediente/i }).first()).toHaveAttribute("href", /scope=JALISCO&court=/);
   await page.goto(localCaseUrl);
   await page.getByRole("button", { name: "Eliminar asunto" }).click();
   await page.getByRole("button", { name: "Sí, eliminar" }).click();

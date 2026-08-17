@@ -1,9 +1,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseFederalAgreementHistoryHtml, parseFederalSessionHtml } from "@/lib/providers/federal/provider";
+import { federalCaseTypeMatches, parseFederalAgreementHistoryHtml, parseFederalSessionHtml } from "@/lib/providers/federal/provider";
 
 describe("contrato y degradación segura federal", () => {
+  it("exige el tipo de asunto además del órgano y número", () => {
+    expect(federalCaseTypeMatches("Queja", "Recurso de Queja")).toBe(true);
+    expect(federalCaseTypeMatches("Queja", "Amparo Directo")).toBe(false);
+    expect(federalCaseTypeMatches("Amparo en revisión", "Revisión Fiscal")).toBe(false);
+  });
+
   it("interpreta una lista a sesión anonimizada", () => {
     const html = readFileSync(resolve("tests/fixtures/federal/session-list.anonymized.html"), "utf8");
     const rows = parseFederalSessionHtml(html, { requestedDate: "2026-08-07", filter: "lista", sessionType: "ORDINARY" });
@@ -33,5 +39,11 @@ describe("contrato y degradación segura federal", () => {
     expect(parsed.records[0]).toMatchObject({ agreementDate: "2024-10-31", publicationDate: "2024-11-04", neun: "36285450" });
     expect(parsed.records[0].detailUrl).toContain("VerAcuerdo.aspx");
     expect(parsed.caseSession).toEqual({ listDate: "2026-08-07", sessionDate: "2026-08-14", result: "Aprobado", judgmentSense: "No ampara" });
+  });
+
+  it("rechaza una ficha del mismo número cuando pertenece a otro tipo de asunto", () => {
+    const html = '<span id="lblNombreOrgano">Tercer Tribunal Colegiado en Materia Civil del Tercer Circuito - Amparo Directo</span>';
+    const parsed = parseFederalAgreementHistoryHtml(html, { caseNumber: "29/2026", caseType: "Queja", courtExternalId: "136", sourceUrl: "https://oficial.test/ficha" });
+    expect(parsed).toEqual({ matched: false, records: [] });
   });
 });

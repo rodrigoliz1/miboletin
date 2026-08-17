@@ -27,6 +27,14 @@ describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jali
 });
 
 describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de listas a sesión federales", () => {
+  it("mantiene aislada la Queja 29/2026 por órgano, número y tipo", async () => {
+    const records = await new FederalProvider().fetchCase("29/2026", "136", "Queja");
+    const sessions = records.filter((record) => String(record.externalId).includes("case-"));
+    expect(records.every((record) => record.caseType === "Queja")).toBe(true);
+    expect(sessions.some((record) => record.publicationDate === "2026-07-31" && record.agreementDate === "2026-08-20")).toBe(true);
+    expect(sessions.every((record) => record.agreementDate === "2026-08-20")).toBe(true);
+  }, 30_000);
+
   it("obtiene los acuerdos y el estado de sesión de un expediente federal real", async () => {
     const records = await new FederalProvider().fetchCase("461/2024", "119", "Amparo Directo");
     expect(records.filter((record) => String(record.externalId).startsWith("agreement:"))).toHaveLength(5);

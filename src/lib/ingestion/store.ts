@@ -1,6 +1,5 @@
 import type { NormalizedPublication } from "@/lib/domain/types";
 import { normalizeName } from "@/lib/domain/normalization";
-import { matchCase } from "@/lib/domain/matching";
 import { db } from "@/lib/db/client";
 
 export interface PersistenceMetrics {
@@ -143,21 +142,25 @@ export async function persistPublications(provider: string, items: NormalizedPub
         `;
       }
 
-      const candidateKey = `${court.id}:${item.caseNumberNormalized}:${normalizeName(item.caseType ?? "")}`;
+      const candidateKey = jurisdiction === "FEDERAL" ? judicialCase.id : `${court.id}:${item.caseNumberNormalized}`;
       let candidates = candidatesByCase.get(candidateKey);
       if (!candidates) {
-        candidates = await tx`
-          SELECT mc.id, wc.case_type, wc.case_number_normalized
-          FROM monitored_cases mc
-          JOIN judicial_cases wc ON wc.id = mc.case_id
-          WHERE wc.court_id = ${court.id} AND wc.case_number_normalized = ${item.caseNumberNormalized} AND mc.active
-        ` as Array<{ id: string; case_type: string; case_number_normalized: string }>;
+        candidates = jurisdiction === "FEDERAL"
+          ? await tx`
+              SELECT mc.id, wc.case_type, wc.case_number_normalized
+              FROM monitored_cases mc
+              JOIN judicial_cases wc ON wc.id = mc.case_id
+              WHERE wc.id = ${judicialCase.id} AND mc.active
+            ` as Array<{ id: string; case_type: string; case_number_normalized: string }>
+          : await tx`
+              SELECT mc.id, wc.case_type, wc.case_number_normalized
+              FROM monitored_cases mc
+              JOIN judicial_cases wc ON wc.id = mc.case_id
+              WHERE wc.court_id = ${court.id} AND wc.case_number_normalized = ${item.caseNumberNormalized} AND mc.active
+            ` as Array<{ id: string; case_type: string; case_number_normalized: string }>;
         candidatesByCase.set(candidateKey, candidates);
       }
-      const exactCandidateIds = candidates.filter((candidate) => matchCase(
-          { jurisdiction, provider, courtExternalId: item.courtExternalId, caseType: candidate.case_type, caseNumber: candidate.case_number_normalized },
-          { jurisdiction, provider, courtExternalId: item.courtExternalId, caseType: item.caseType, caseNumber: item.caseNumberNormalized },
-        ) === "EXACT").map((candidate) => String(candidate.id));
+      const exactCandidateIds = candidates.map((candidate) => String(candidate.id));
       for (const monitoredId of exactCandidateIds) {
         pendingMonitoredIds.push(monitoredId);
         pendingPublicationIds.push(String(publications[0].id));

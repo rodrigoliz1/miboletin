@@ -26,6 +26,15 @@ const groupNames: Record<FederalCourtType, string> = {
   COLLEGIATE: "Asuntos de tribunal colegiado", DISTRICT: "Asuntos de juzgado de distrito", APPEAL: "Asuntos de tribunal colegiado de apelación", REGIONAL: "Asuntos de pleno regional", LABOR: "Asuntos de tribunal laboral federal", OTHER: "Asuntos federales",
 };
 
+export const federalCourtTypeNames: Record<FederalCourtType, string> = {
+  COLLEGIATE: "Tribunales colegiados de circuito",
+  DISTRICT: "Juzgados de distrito",
+  APPEAL: "Tribunales colegiados de apelación",
+  REGIONAL: "Plenos regionales",
+  LABOR: "Tribunales laborales federales",
+  OTHER: "Otros órganos federales",
+};
+
 export function FederalCaseSelection({ courts, initialCourt, initialType }: { courts: Array<SearchableSelectOption & { courtType: FederalCourtType }>; initialCourt?: string; initialType?: string }) {
   const [courtId, setCourtId] = useState(initialCourt && courts.some((court) => court.value === initialCourt) ? initialCourt : courts[0]?.value ?? "");
   const courtType = courts.find((court) => court.value === courtId)?.courtType ?? "OTHER";

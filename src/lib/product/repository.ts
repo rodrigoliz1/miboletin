@@ -310,8 +310,10 @@ export async function createMonitoredCase(input: {
       INSERT INTO case_movements (monitored_case_id, publication_id, match_result, detected_at)
       SELECT ${monitored.id}, jp.id, 'EXACT', now()
       FROM judicial_publications jp
-      WHERE jp.court_id = ${court.id}
-        AND jp.case_number_normalized = ${parsed.normalized}
+      WHERE (
+        (${input.jurisdiction} = 'FEDERAL' AND jp.case_id = ${judicialCase.id})
+        OR (${input.jurisdiction} = 'JALISCO' AND jp.court_id = ${court.id} AND jp.case_number_normalized = ${parsed.normalized})
+      )
         AND jp.publication_date >= ${input.monitorFrom}
       ON CONFLICT (monitored_case_id, publication_id) DO NOTHING
       RETURNING id
@@ -447,9 +449,11 @@ export async function linkStoredPublicationsToMonitoredCase(organizationId: stri
       SELECT mc.id, jp.id, 'EXACT', now()
       FROM monitored_cases mc
       JOIN judicial_cases watched ON watched.id = mc.case_id
-      JOIN judicial_publications jp
-        ON jp.court_id = watched.court_id
-       AND jp.case_number_normalized = watched.case_number_normalized
+      JOIN judicial_authorities watched_authority ON watched_authority.id = watched.authority_id
+      JOIN judicial_publications jp ON (
+        (watched_authority.jurisdiction = 'FEDERAL' AND jp.case_id = watched.id)
+        OR (watched_authority.jurisdiction = 'JALISCO' AND jp.court_id = watched.court_id AND jp.case_number_normalized = watched.case_number_normalized)
+      )
       WHERE mc.id = ${monitoredCaseId}
         AND mc.organization_id = ${organizationId}
         AND mc.active

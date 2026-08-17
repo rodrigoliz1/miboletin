@@ -4,6 +4,7 @@ import { getSession } from "@/lib/security/session";
 import { hasActiveProductAccess } from "@/lib/billing/access";
 import { dateInMexicoCity, formatGuadalajaraDateTime, formatGuadalajaraTime, isIsoDate, optionalUuid } from "@/lib/product/query";
 import { listOrganizationMovements } from "@/lib/product/repository";
+import { verifiedNotebookLabel } from "@/lib/product/judicial-display";
 
 export const maxDuration = 30;
 
@@ -22,16 +23,19 @@ export async function GET(request: Request) {
   const movements = (await listOrganizationMovements(session.organizationId, date, date, folder ?? undefined)).filter((item) => item.publication_kind === "AGREEMENT");
   const ordered = [...movements].sort((a, b) => b.publication_date.localeCompare(a.publication_date) || b.detected_at.localeCompare(a.detected_at));
   const total = ordered.length;
-  const item = (movement: (typeof ordered)[number], index: number) => ({
+  const item = (movement: (typeof ordered)[number], index: number) => {
+    const notebook = verifiedNotebookLabel(movement.notebook, movement.official_text);
+    return ({
     number: total - index,
     heading: `${movement.case_number} - ${movement.court_name}`,
     meta: [
       `${movement.case_type} | Fecha de publicación: ${dateLabel(movement.publication_date)} | Fecha del acuerdo: ${dateLabel(movement.agreement_date)}`,
-      `Hora de consulta del registro: ${formatGuadalajaraTime(movement.retrieved_at)} hrs (Guadalajara)${movement.notebook ? ` | ${movement.notebook}` : ""}`,
+      `Hora de consulta del registro: ${formatGuadalajaraTime(movement.retrieved_at)} hrs (Guadalajara)${notebook ? ` | ${notebook}` : ""}`,
     ],
     parties: [movement.plaintiff, movement.defendant].filter(Boolean).join(" / ") || undefined,
     body: movement.official_text,
-  });
+    });
+  };
   const local = ordered.map((movement, index) => ({ movement, index })).filter(({ movement }) => movement.jurisdiction === "JALISCO").map(({ movement, index }) => item(movement, index));
   const federal = ordered.map((movement, index) => ({ movement, index })).filter(({ movement }) => movement.jurisdiction === "FEDERAL").map(({ movement, index }) => item(movement, index));
   const now = new Date();

@@ -5,6 +5,7 @@ import { listJudicialSearchMovements, searchJudicialCases } from "@/lib/product/
 import { formatGuadalajaraDateTime } from "@/lib/product/query";
 import { getSession } from "@/lib/security/session";
 import { hasActiveProductAccess } from "@/lib/billing/access";
+import { verifiedNotebookLabel } from "@/lib/product/judicial-display";
 
 export const maxDuration = 45;
 
@@ -37,7 +38,10 @@ export async function GET(request: Request) {
   const build = (result: (typeof results)[number], index: number) => {
     const agreements = movements.filter((movement) => movement.caseId === result.caseId);
     const body = parsed.data.detail === "rigorous"
-      ? agreements.map((movement, movementIndex) => `${agreements.length - movementIndex}. Publicación: ${day(movement.publicationDate)} | Acuerdo: ${day(movement.agreementDate)}${movement.notebook ? ` | ${movement.notebook}` : ""}\n${movement.officialText}`).join("\n\n")
+      ? agreements.map((movement, movementIndex) => {
+        const notebook = verifiedNotebookLabel(movement.notebook, movement.officialText);
+        return `${agreements.length - movementIndex}. Publicación: ${day(movement.publicationDate)} | Acuerdo: ${day(movement.agreementDate)}${notebook ? ` | ${notebook}` : ""}\n${movement.officialText}`;
+      }).join("\n\n")
       : undefined;
     return {
       number: total - index,

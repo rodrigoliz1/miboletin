@@ -7,6 +7,7 @@ import { getMonitoredCase, type MovementRecord } from "@/lib/product/repository"
 import { inferFederalCourtType, isFederalSessionCourt } from "@/lib/providers/federal/provider";
 import { CaseDeleteButton } from "@/components/case-delete-button";
 import { formatGuadalajaraDateTime } from "@/lib/product/query";
+import { selectCurrentSessionMovements, verifiedNotebookLabel } from "@/lib/product/judicial-display";
 
 export const dynamic = "force-dynamic";
 
@@ -15,22 +16,33 @@ function date(value?: string) {
   return new Intl.DateTimeFormat("es-MX", { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${value.slice(0, 10)}T12:00:00Z`));
 }
 
+function sourceStatusLabel(status: string) {
+  if (status === "VERIFIED") return "Fuente verificada";
+  if (status === "CHECKING") return "Revisión en segundo plano";
+  if (status === "PENDING") return "Verificando fuente";
+  if (status === "DEGRADED") return "Revisión parcial";
+  if (status === "FAILED") return "Fuente temporalmente no disponible";
+  return "Estado de fuente pendiente";
+}
+
 function Trace({ movement }: { movement: MovementRecord }) {
   return <details className="trace-details"><summary>Ver trazabilidad técnica</summary><dl><div><dt>Recuperado</dt><dd>{formatGuadalajaraDateTime(movement.retrievedAt, { dateStyle: "medium", timeStyle: "short" })} · Guadalajara</dd></div><div><dt>Huella SHA-256</dt><dd><code>{movement.snapshotHash}</code></dd></div></dl></details>;
 }
 
 function AgreementTimeline({ movements, federal, checking }: { movements: MovementRecord[]; federal: boolean; checking: boolean }) {
   if (!movements.length) return <div className="empty-panel"><p>{checking ? "Estamos recuperando el historial oficial de este expediente." : "No encontramos autos o acuerdos para este expediente."}</p><small>{checking ? "La consulta directa ya está en curso; los resultados aparecerán sin esperar al rastreo de sesiones." : "La fuente oficial fue consultada sin una coincidencia almacenada para este órgano, tipo y número."}</small></div>;
-  return <div className="timeline">{movements.map((movement) => <article className="timeline-item" key={movement.id}>
+  return <div className="timeline">{movements.map((movement) => {
+    const notebook = verifiedNotebookLabel(movement.notebook, movement.officialText);
+    return <article className="timeline-item" key={movement.id}>
     <time className="timeline-date">Publicado {date(movement.publicationDate)}</time>
     <div className="timeline-content">
       <h3>Resolución publicada</h3>
-      {federal && movement.notebook && <span className="notebook-label">{movement.notebook}</span>}
+      {federal && notebook && <span className="notebook-label">{notebook}</span>}
       <div className="movement-dates"><span><small>Fecha del auto</small>{date(movement.agreementDate)}</span>{!federal && <span><small>Fecha de promoción</small>{date(movement.promotionDate)}</span>}</div>
       <div className="official-block"><span className="official-label">Extracto de la publicación oficial</span><p>{movement.officialText}</p>{federal && <a href={movement.sourceUrl} target="_blank" rel="noreferrer">Abrir síntesis oficial completa <ArrowSquareOut size={12} /></a>}</div>
       <Trace movement={movement} />
     </div>
-  </article>)}</div>;
+  </article>})}</div>;
 }
 
 function SessionTimeline({ movements, checking }: { movements: MovementRecord[]; checking: boolean }) {
@@ -61,14 +73,7 @@ export default async function CaseDetailPage({ params, searchParams }: { params:
   const federal = item.jurisdiction === "FEDERAL";
   const checking = item.sourceStatus === "CHECKING" || item.sourceStatus === "PENDING";
   const agreements = detail.movements.filter((movement) => movement.publicationKind === "AGREEMENT");
-  const sessionKeys = new Set<string>();
-  const sessions = detail.movements.filter((movement) => {
-    if (movement.publicationKind === "AGREEMENT") return false;
-    const key = [movement.publicationKind, movement.publicationDate, movement.sessionDate].join("|");
-    if (sessionKeys.has(key)) return false;
-    sessionKeys.add(key);
-    return true;
-  });
+  const sessions = selectCurrentSessionMovements(detail.movements.filter((movement) => movement.publicationKind !== "AGREEMENT"));
   const tracksSessions = federal && isFederalSessionCourt(item.courtType ?? inferFederalCourtType(item.courtName));
   const latestListed = sessions.find((movement) => movement.publicationKind === "SESSION_LISTED");
   const latestResult = sessions.find((movement) => movement.publicationKind === "SESSION_RESULT");
@@ -78,7 +83,8 @@ export default async function CaseDetailPage({ params, searchParams }: { params:
     {query.created && <div className="notice" style={{ marginBottom: 20 }}><strong>Asunto guardado y listo para usarse.</strong> Primero recuperamos sus acuerdos; la revisión de sesiones continúa aparte cuando corresponde.</div>}
     <SourceAutoRefresh caseId={id} force={query.refresh === "1"} />
     {item.sourceStatus === "FAILED" && item.sourceMessage && <div className="notice danger-notice" style={{ marginBottom: 20 }}><strong>Fuente temporalmente no verificada.</strong> {item.sourceMessage}. Conservamos el histórico y no afirmamos que no existan movimientos.</div>}
-    <section className="case-header"><div><span className="result-kicker">{federal ? "FEDERAL · ACUERDOS OFICIALES" : "JALISCO · BOLETÍN JUDICIAL"}</span><h1>{item.number} {item.newCount > 0 && <span className="tag tag-new">{item.newCount} nuevo hoy</span>}</h1><p>{item.courtName}</p><div className="case-meta"><span>Tipo: {item.caseType}</span>{item.circuitName && <span>{item.circuitName}</span>}<span>Carpetas: {item.folderNames.join(" · ") || "General"}</span><span>{tracksSessions ? "Acuerdos + vigilancia de sesión" : federal ? "Vigilancia de acuerdos" : "Historial del boletín"}</span></div></div><div><span className={`status ${item.sourceStatus === "VERIFIED" ? "status-online" : item.sourceStatus === "FAILED" ? "status-failed" : "status-degraded"}`}>{item.sourceStatus === "VERIFIED" ? "Fuente verificada" : item.sourceStatus === "CHECKING" ? "Revisión en segundo plano" : item.sourceStatus === "PENDING" ? "Verificando fuente" : item.sourceStatus}</span></div></section>
+    {item.sourceStatus === "DEGRADED" && item.sourceMessage && <div className="notice" style={{ marginBottom: 20 }}><strong>Revisión parcial.</strong> {item.sourceMessage}. Conservamos los datos confirmados y volveremos a consultar la fuente.</div>}
+    <section className="case-header"><div><span className="result-kicker">{federal ? "FEDERAL · ACUERDOS OFICIALES" : "JALISCO · BOLETÍN JUDICIAL"}</span><h1>{item.number} {item.newCount > 0 && <span className="tag tag-new">{item.newCount} nuevo hoy</span>}</h1><p>{item.courtName}</p><div className="case-meta"><span>Tipo: {item.caseType}</span>{item.circuitName && <span>{item.circuitName}</span>}<span>Carpetas: {item.folderNames.join(" · ") || "General"}</span><span>{tracksSessions ? "Acuerdos + vigilancia de sesión" : federal ? "Vigilancia de acuerdos" : "Historial del boletín"}</span></div></div><div><span className={`status ${item.sourceStatus === "VERIFIED" ? "status-online" : item.sourceStatus === "FAILED" ? "status-failed" : "status-degraded"}`}>{sourceStatusLabel(item.sourceStatus)}</span></div></section>
     {(item.plaintiff || item.defendant) && <section className="party-grid case-party-grid"><div><span>Parte actora / quejosa</span><strong>{item.plaintiff ?? "No publicada por el órgano"}</strong></div><div><span>Parte demandada / tercero / autoridad</span><strong>{item.defendant ?? "No publicada por el órgano"}</strong></div></section>}
     {tracksSessions && <section className="session-summary"><header><span>Seguimiento de sesión</span><strong>{latestResult ? "Sesionado" : latestListed ? "Listado" : "Sin listado"}</strong></header><div><article><small>Fecha en que se listó</small><p>{latestListed ? date(latestListed.publicationDate) : "No se ha listado a sesión"}</p></article><article><small>Fecha programada de sesión</small><p>{date(latestResult?.sessionDate ?? latestListed?.sessionDate)}</p></article><article><small>Sentido y resultado</small><p>{latestResult ? [latestResult.result, latestResult.judgment].filter(Boolean).join(" · ") || "Resultado aún no publicado" : "Pendiente de sesión"}</p></article></div></section>}
     <section className="evidence-strip" aria-label="Trazabilidad de la consulta"><div><ShieldCheck size={19} weight="duotone" /><span><strong>Origen oficial</strong>{federal ? "Ficha SISE y listas públicas del PJF" : "Boletín judicial del CJ Jalisco"}</span></div><div><Fingerprint size={19} weight="duotone" /><span><strong>Vinculación verificable</strong>Órgano, tipo y número de expediente</span></div><div><Fingerprint size={19} weight="duotone" /><span><strong>Integridad comprobable</strong>Cada captura conserva fecha y huella SHA-256</span></div></section>

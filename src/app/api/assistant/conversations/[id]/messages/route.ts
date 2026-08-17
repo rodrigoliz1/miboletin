@@ -1,13 +1,15 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { buildAssistantContext } from "@/lib/assistant/context";
 import { addAssistantReply, addUserAssistantMessage, getAssistantConversation } from "@/lib/assistant/repository";
 import { answerWithOpenAI } from "@/lib/assistant/openai";
 import { getSession } from "@/lib/security/session";
 import { hasActiveProductAccess } from "@/lib/billing/access";
-import { executeAddCaseAction } from "@/lib/assistant/actions";
+import { executeAddCaseActions } from "@/lib/assistant/actions";
+import { refreshMonitoredCase } from "@/lib/product/refresh";
+import { tryMarkMonitoredCaseChecking } from "@/lib/product/repository";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const idSchema = z.string().uuid();
 const bodySchema = z.object({ message: z.string().trim().min(1).max(4000) });
@@ -50,14 +52,29 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       history: existing.messages,
       context,
     });
-    const { action, ...answer } = generated;
-    if (action) {
-      try {
-        const added = await executeAddCaseAction({ organizationId: session.organizationId, userId: session.userId, action });
-        answer.content = `Agregué el expediente ${added.caseNumber} a la carpeta ${added.folderName}. Verifiqué el órgano ${added.courtName} antes de guardarlo. Puedes abrirlo en /cases/${added.id}.`;
-      } catch (actionError) {
-        answer.content = actionError instanceof Error ? `No agregué el expediente: ${actionError.message}` : "No pude verificar los datos necesarios para agregar el expediente.";
-      }
+    const { actions, ...answer } = generated;
+    if (actions?.length) {
+      const added = await executeAddCaseActions({ organizationId: session.organizationId, userId: session.userId, actions });
+      const successes = added.filter((item) => item.ok);
+      const failures = added.filter((item) => !item.ok);
+      const lines = successes.map((item) => `• ${item.caseNumber} — ${item.courtName} — carpeta ${item.folderName} (/cases/${item.id})`);
+      const failedLines = failures.map((item) => `• ${item.caseNumber}: ${item.error}`);
+      answer.content = [
+        successes.length ? `Agregué ${successes.length} ${successes.length === 1 ? "expediente" : "expedientes"}. La consulta oficial continuará en segundo plano:` : "No pude agregar los expedientes solicitados.",
+        ...lines,
+        ...(failedLines.length ? ["No se agregaron:", ...failedLines] : []),
+      ].join("\n");
+      if (successes.length) after(async () => {
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < successes.length) {
+            const item = successes[cursor++];
+            const acquired = await tryMarkMonitoredCaseChecking(session.organizationId, item.id, true);
+            if (acquired) await refreshMonitoredCase(session.organizationId, item.id, true);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(2, successes.length) }, () => worker()));
+      });
     }
     const assistantMessage = await addAssistantReply({
       organizationId: session.organizationId,

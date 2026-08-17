@@ -61,7 +61,7 @@ export function CourtDirectoryExplorer({ courts }: { courts: CourtExplorerItem[]
             <div className="court-card-top"><span className="court-code">{court.externalId}</span><small>{court.group}</small></div>
             <h3>{court.name}</h3>
             {court.address && <p><MapPin size={14} />{court.address}</p>}
-            <Link href={`/search?court=${encodeURIComponent(court.externalId)}`}>Consultar expediente <ArrowRight size={14} /></Link>
+            <Link href={`/search?scope=JALISCO&court=${encodeURIComponent(court.externalId)}`}>Consultar expediente <ArrowRight size={14} /></Link>
           </article>)}
         </div>
       </section>)}

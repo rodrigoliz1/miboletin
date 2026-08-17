@@ -11,6 +11,7 @@ import {
   type RawPublication,
 } from "@/lib/domain/types";
 import { respectfulFetch } from "@/lib/providers/http";
+import { normalizeName } from "@/lib/domain/normalization";
 
 const catalogItemSchema = z.object({ IdItem: z.number(), Valor: z.string() });
 
@@ -131,6 +132,37 @@ function agreementTypeIds(caseType: string | undefined): string[] {
   return [];
 }
 
+export function supportsFederalCaseType(caseType: string | undefined): boolean {
+  return agreementTypeIds(caseType).length > 0;
+}
+
+function federalCaseTypeKey(value: string | undefined): string {
+  const normalized = normalizeName(value ?? "").toLowerCase();
+  if (!normalized) return "";
+  if (normalized.includes("amparo contra leyes")) return "AMPARO_CONTRA_LEYES";
+  if (normalized.includes("amparo directo")) return "AMPARO_DIRECTO";
+  if (normalized.includes("revision fiscal")) return "REVISION_FISCAL";
+  if (normalized.includes("revision contenciosa")) return "REVISION_CONTENCIOSA";
+  if (normalized.includes("amparo") && normalized.includes("revision")) return "AMPARO_REVISION";
+  if (normalized.includes("amparo indirecto")) return "AMPARO_INDIRECTO";
+  if (normalized.includes("conflicto") && normalized.includes("acumulacion")) return "CONFLICTO_ACUMULACION";
+  if (normalized.includes("conflicto") || normalized.includes("competencial")) return "CONFLICTO_COMPETENCIAL";
+  if (normalized.includes("incidente") && normalized.includes("inejecucion")) return "INCIDENTE_INEJECUCION";
+  if (normalized.includes("repeticion") && normalized.includes("acto reclamado")) return "REPETICION_ACTO";
+  if (normalized.includes("reconocimiento") && normalized.includes("inocencia")) return "RECONOCIMIENTO_INOCENCIA";
+  if (normalized.includes("inconform")) return "INCONFORMIDAD";
+  if (normalized.includes("impedimento")) return "IMPEDIMENTO";
+  if (normalized.includes("queja")) return "QUEJA";
+  if (normalized.includes("reclam")) return "RECLAMACION";
+  return normalized.toUpperCase().replace(/\s+/g, "_");
+}
+
+export function federalCaseTypeMatches(requested: string | undefined, published: string | undefined): boolean {
+  const left = federalCaseTypeKey(requested);
+  const right = federalCaseTypeKey(published);
+  return Boolean(left && right && left === right);
+}
+
 function agreementDetailUrl(args: string[]): string {
   const [organism, order, neun, matterId, autoDate, publicationDate, caseNumber] = args;
   const query = new URLSearchParams({
@@ -159,6 +191,9 @@ export function parseFederalAgreementHistoryHtml(
   const $ = cheerio.load(html);
   const title = clean($("#lblNombreOrgano").text());
   if (!title) throw new ProviderError("SCHEMA_DRIFT", "La ficha federal no confirmó el órgano ni el tipo de asunto", false);
+  const titleSeparator = title.lastIndexOf(" - ");
+  const publishedCaseType = titleSeparator >= 0 ? title.slice(titleSeparator + 3).trim() : undefined;
+  if (!federalCaseTypeMatches(params.caseType, publishedCaseType)) return { matched: false, records: [] };
   const headers = $("#grvAcuerdos tr").first().find("th").map((_, cell) => clean($(cell).text()) ?? "").get();
   const fieldValue = (label: RegExp): string | undefined => {
     let value: string | undefined;
@@ -474,7 +509,10 @@ export class FederalProvider implements JudicialSourceProvider {
     const records = lists.flatMap((list) => list.records);
     if (!query.caseNumber) return records;
     const requested = normalizeCaseNumber(query.caseNumber).normalized;
-    return records.filter((record) => normalizeCaseNumber(record.caseNumberRaw).normalized === requested);
+    return records.filter((record) =>
+      normalizeCaseNumber(record.caseNumberRaw).normalized === requested
+      && federalCaseTypeMatches(query.caseType, record.caseType),
+    );
   }
 
   async fetchByDate(query: PublicationQuery): Promise<RawPublication[]> {
