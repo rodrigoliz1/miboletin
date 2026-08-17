@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
+import { FederalProvider } from "@/lib/providers/federal/provider";
+
+describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jalisco", () => {
+  it("mantiene los cinco catálogos y sus campos esenciales", async () => {
+    const provider = new JaliscoProvider();
+    const courts = await provider.fetchCatalogs();
+    expect(courts.length).toBeGreaterThanOrEqual(190);
+    expect(new Set(courts.map((court) => court.externalId)).size).toBe(courts.length);
+    expect(new Set(courts.map((court) => court.family))).toEqual(new Set(["METROPOLITAN", "FOREIGN", "LABOR", "TRADITIONAL_CRIMINAL", "ORAL_CRIMINAL"]));
+    expect(courts[0]).toMatchObject({ jurisdiction: "JALISCO" });
+  }, 30_000);
+
+  it.each([
+    ["metropolitano", "C01", "11/2026"],
+    ["foráneo", "AH1", "76/2025"],
+    ["laboral", "L03", "23/2023"],
+    ["penal tradicional", "09P", "335/2005-D-S-A"],
+    ["penal oral", "D14", "10214/2024"],
+  ])("consulta un expediente real del catálogo %s", async (_family, court, caseNumber) => {
+    const result = await new JaliscoProvider().searchCase(caseNumber, court);
+    expect(result.records.length).toBeGreaterThan(0);
+    expect(result.records[0].courtExternalId).toBe(court);
+    expect(result.records[0].officialText.length).toBeGreaterThan(5);
+  }, 30_000);
+});
+
+describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de listas a sesión federales", () => {
+  it("obtiene los acuerdos y el estado de sesión de un expediente federal real", async () => {
+    const records = await new FederalProvider().fetchCase("461/2024", "119", "Amparo Directo");
+    expect(records.filter((record) => String(record.externalId).startsWith("agreement:"))).toHaveLength(5);
+    expect(records.some((record) => String(record.externalId).endsWith("-listed"))).toBe(true);
+    expect(records.some((record) => record.officialText.includes("SENTIDO: No ampara"))).toBe(true);
+    expect(records[0].sourceUrl).toContain("VerAcuerdo.aspx");
+  }, 30_000);
+
+  it("obtiene circuito, tribunal, calendario y lista completa sin CAPTCHA", async () => {
+    const provider = new FederalProvider();
+    const circuits = await provider.getCircuits();
+    expect(circuits).toHaveLength(32);
+    const courts = await provider.getCourts("3");
+    expect(courts.some((court) => court.externalId === "119")).toBe(true);
+    const dates = await provider.getAvailableDates("119", "lista", 2026, 8);
+    expect(dates).toContain("2026-08-07");
+    const records = await provider.fetchByDate({ date: "2026-08-07", circuitId: "3", courtExternalId: "119", sourceMode: "LISTED" });
+    expect(records.length).toBeGreaterThanOrEqual(40);
+    expect(records[0]).toMatchObject({ courtExternalId: "119", sourceUrl: expect.stringContaining("oaj.gob.mx") });
+    expect(records[0].agreementDate).toMatch(/^2026-08-/);
+  }, 30_000);
+});

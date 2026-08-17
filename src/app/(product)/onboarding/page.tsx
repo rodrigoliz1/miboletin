@@ -1,0 +1,6 @@
+import Link from "next/link";
+import { Check } from "@phosphor-icons/react/dist/ssr";
+
+export default function OnboardingPage() {
+  return <div className="content" style={{ maxWidth: 900 }}><div className="page-heading"><div><p className="eyebrow">Configuración inicial</p><h1>Bienvenido a Mi Boletín Judicial.</h1><p>Vigila tus asuntos y recibe aviso cuando exista una nueva publicación.</p></div></div><section className="panel" style={{ padding: 28 }}><div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 35 }}>{["Jurisdicción","Órgano","Expediente","Confirmación"].map((step, index) => <div key={step} style={{ borderTop: `2px solid ${index === 0 ? "var(--burgundy)" : "var(--line)"}`, paddingTop: 9, fontSize: 10, color: index === 0 ? "var(--ink)" : "var(--stone)" }}>{index === 0 && <Check size={12} style={{ display: "inline", marginRight: 4 }} />}{step}</div>)}</div><h2 style={{ fontFamily: "Georgia,serif", fontSize: 28, fontWeight: 500 }}>Agrega tu primer expediente</h2><p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>Te llevaremos al formulario de alta. Puedes cambiar avisos y responsables después.</p><Link className="button button-primary" href="/cases/new">Continuar</Link></section></div>;
+}

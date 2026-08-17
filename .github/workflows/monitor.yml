@@ -1,0 +1,40 @@
+name: Vigilancia judicial
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:00, 11:00, 14:00, 17:00 y 20:00 en Ciudad de México (UTC-6).
+    - cron: "0 14,17,20,23 * * 1-5"
+    - cron: "0 2 * * 2-6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: judicial-monitor-production
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
+      APP_URL: ${{ secrets.APP_URL }}
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      BREVO_SENDER_EMAIL: ${{ secrets.BREVO_SENDER_EMAIL }}
+      BREVO_SENDER_NAME: Mi Boletín Judicial
+      FEDERAL_SESSION_BASE: https://www.dgej.cjf.gob.mx/SiseInternet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm monitor:daily

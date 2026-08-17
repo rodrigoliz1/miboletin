@@ -1,0 +1,8 @@
+import { LockKey, Receipt } from "@phosphor-icons/react/dist/ssr";
+import type { BillingSummary } from "@/lib/billing/repository";
+
+export function SubscriptionGate({ billing, canManage }: { billing: BillingSummary; canManage: boolean }) {
+  const expired = billing.status === "canceled" || billing.status === "unpaid" || billing.status === "past_due";
+  return <div className="subscription-gate" role="dialog" aria-modal="true" aria-labelledby="subscription-gate-title"><div className="subscription-gate-card"><span className="gate-icon"><LockKey size={25} weight="duotone" /></span><p className="result-kicker">ACCESO A TU ESPACIO</p><h2 id="subscription-gate-title">{expired ? "Tu suscripción requiere atención." : "Activa tu suscripción para continuar."}</h2><p>{expired ? "Actualiza tu forma de pago o renueva el servicio para volver a consultar tus asuntos, publicaciones y avisos." : "Elige la suscripción mensual para comenzar a vigilar expedientes y conservar toda su trazabilidad."}</p><div className="gate-price"><strong>$499</strong><span>MXN / mes</span></div>{canManage ? <div className="gate-actions"><form action="/api/billing/checkout" method="post"><button className="button button-primary" type="submit">{expired ? "Renovar suscripción" : "Suscribirme ahora"}</button></form>{billing.customerId && <form action="/api/billing/portal" method="post"><button className="button button-secondary" type="submit"><Receipt size={16} /> Gestionar pago</button></form>}</div> : <p className="gate-admin-note">Solicita al administrador de tu organización que renueve la suscripción.</p>}</div></div>;
+}
+

@@ -1,0 +1,16 @@
+{
+  "success": 1,
+  "data": [
+    {
+      "EXP": "192/2025",
+      "CVE_JUZ": "C01",
+      "FCH_PRO": "2026-08-12T00:00:00.000Z",
+      "FCH_ACU": "2026-08-13T00:00:00.000Z",
+      "BOLETIN": "SE RECIBE OFICIO DE LA AUTORIDAD FEDERAL, SE PROVEE.",
+      "TIPO": "CO",
+      "DESCRIP": "CIVIL ORDINARIO",
+      "act_names": "PARTE ACTORA ANONIMIZADA",
+      "dem_names": "PARTE DEMANDADA ANONIMIZADA"
+    }
+  ]
+}
