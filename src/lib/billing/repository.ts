@@ -42,7 +42,7 @@ export async function getBillingSummary(organizationId: string): Promise<Billing
   const periodValid = !periodEnd || new Date(periodEnd).valueOf() > Date.now();
   const paid = (status === "active" || status === "trialing") && periodValid;
   const localBypass = process.env.NODE_ENV !== "production" && !configured;
-  const testBypass = process.env.E2E_TEST_MODE === "1";
+  const testBypass = process.env.E2E_TEST_MODE === "1" && process.env.E2E_FORCE_BILLING_GATE !== "1";
   return {
     configured,
     customerId: row?.stripe_customer_id ?? undefined,

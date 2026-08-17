@@ -3,8 +3,8 @@ name: Vigilancia judicial
 on:
   workflow_dispatch:
   schedule:
-    # 08:00, 11:00, 14:00, 17:00 y 20:00 en Ciudad de México (UTC-6).
-    - cron: "0 14,17,20,23 * * 1-5"
+    # 08:00, 09:00, 11:00, 14:00, 17:00 y 20:00 en Guadalajara (UTC-6).
+    - cron: "0 14,15,17,20,23 * * 1-5"
     - cron: "0 2 * * 2-6"
 
 permissions:

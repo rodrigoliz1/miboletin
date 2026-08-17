@@ -14,7 +14,7 @@ const querySchema = z.object({
 export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ error: "Suscripción inactiva" }, { status: 402 });
   const url = new URL(request.url);
   const query = querySchema.safeParse({
     court: url.searchParams.get("court"),

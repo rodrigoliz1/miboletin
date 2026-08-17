@@ -2,7 +2,7 @@ import { hash } from "bcryptjs";
 import { canonicalCaseKey, normalizeCaseNumber, normalizeName } from "@/lib/domain/normalization";
 import { db } from "@/lib/db/client";
 import type { Jurisdiction, UserRole } from "@/lib/domain/types";
-import { optionalUuid } from "@/lib/product/query";
+import { dateInMexicoCity, optionalUuid } from "@/lib/product/query";
 
 export interface AccountRecord {
   userId: string;
@@ -12,6 +12,7 @@ export interface AccountRecord {
   role: UserRole;
   organizationId: string;
   organizationName: string;
+  sessionVersion: number;
 }
 
 export interface FolderRecord {
@@ -49,6 +50,8 @@ export interface MonitoredCaseRecord {
   refreshStartedAt?: string;
   lastPublicationDate?: string;
   newCount: number;
+  plaintiff?: string;
+  defendant?: string;
 }
 
 export interface MovementRecord {
@@ -70,6 +73,7 @@ export interface MovementRecord {
   sessionType?: string;
   filterKind?: string;
   snapshotHash: string;
+  notebook?: string;
 }
 
 export interface OrganizationMovementRecord {
@@ -89,6 +93,36 @@ export interface OrganizationMovementRecord {
   result: string | null;
   judgment: string | null;
   folder_name: string | null;
+  plaintiff: string | null;
+  defendant: string | null;
+  retrieved_at: string;
+  notebook: string | null;
+}
+
+export interface JudicialSearchResult {
+  caseId: string;
+  monitoredCaseId?: string;
+  number: string;
+  caseType: string;
+  jurisdiction: Jurisdiction;
+  provider: string;
+  courtExternalId: string;
+  courtName: string;
+  courtType?: string;
+  circuitId?: string;
+  circuitName?: string;
+  plaintiff?: string;
+  defendant?: string;
+  publicationCount: number;
+  lastPublicationDate?: string;
+}
+
+export interface JudicialSearchMovement {
+  caseId: string;
+  publicationDate: string;
+  agreementDate?: string;
+  officialText: string;
+  notebook?: string;
 }
 
 function isoTimestamp(value: unknown): string {
@@ -112,7 +146,7 @@ export async function createAccount(input: { name: string; organization: string;
     const [user] = await tx`
       INSERT INTO users (email, name, password_hash, role)
       VALUES (${input.email}, ${input.name}, ${passwordHash}, 'OWNER')
-      RETURNING id, email, name, role
+      RETURNING id, email, name, role, session_version
     `;
     await tx`INSERT INTO memberships (user_id, organization_id, role) VALUES (${user.id}, ${organization.id}, 'OWNER')`;
     await tx`INSERT INTO case_folders (organization_id, name, description, created_by) VALUES (${organization.id}, 'General', 'Asuntos sin carpeta específica', ${user.id})`;
@@ -124,13 +158,14 @@ export async function createAccount(input: { name: string; organization: string;
       role: user.role,
       organizationId: organization.id,
       organizationName: organization.name,
+      sessionVersion: user.session_version,
     } as AccountRecord;
   });
 }
 
 export async function findAccountByEmail(email: string): Promise<AccountRecord | null> {
   const rows = await db()`
-    SELECT u.id AS user_id, u.email, u.name, u.password_hash, m.role,
+    SELECT u.id AS user_id, u.email, u.name, u.password_hash, u.session_version, m.role,
            o.id AS organization_id, o.name AS organization_name
     FROM users u
     JOIN memberships m ON m.user_id = u.id
@@ -149,19 +184,21 @@ export async function findAccountByEmail(email: string): Promise<AccountRecord |
     role: row.role,
     organizationId: row.organization_id,
     organizationName: row.organization_name,
+    sessionVersion: Number(row.session_version),
   } as AccountRecord;
 }
 
 export async function listFolders(organizationId: string): Promise<FolderRecord[]> {
+  const today = dateInMexicoCity();
   const rows = await db()`
     SELECT f.id, f.name, f.description,
            count(DISTINCT mc.id)::int AS case_count,
-           count(DISTINCT n.movement_id) FILTER (WHERE n.status = 'QUEUED')::int AS new_count
+           count(DISTINCT cm.id) FILTER (WHERE jp.publication_date = ${today})::int AS new_count
     FROM case_folders f
     LEFT JOIN monitored_case_folders mcf ON mcf.folder_id = f.id
     LEFT JOIN monitored_cases mc ON mc.id = mcf.monitored_case_id AND mc.active AND mc.deleted_at IS NULL
     LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
-    LEFT JOIN notifications n ON n.movement_id = cm.id AND n.status = 'QUEUED'
+    LEFT JOIN judicial_publications jp ON jp.id = cm.publication_id
     WHERE f.organization_id = ${organizationId}
     GROUP BY f.id
     ORDER BY f.created_at ASC
@@ -315,6 +352,7 @@ export async function createMonitoredCase(input: {
 
 export async function listMonitoredCases(organizationId: string, folderId?: string): Promise<MonitoredCaseRecord[]> {
   const selectedFolderId = optionalUuid(folderId);
+  const today = dateInMexicoCity();
   const rows = await db()`
     SELECT mc.id, jc.id AS case_id, jc.case_number_normalized AS number, jc.case_type,
            ja.jurisdiction, ja.code AS provider, c.external_id AS court_external_id, c.name AS court_name, c.court_type,
@@ -322,8 +360,8 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
            folders.folder_ids, folders.folder_names, mc.label, jc.status,
            mc.source_status, mc.source_message, mc.monitor_from, mc.created_at,
            mc.last_checked_at, mc.last_successful_check_at, mc.refresh_started_at,
-           latest.publication_date AS last_publication_date,
-           count(DISTINCT n.movement_id) FILTER (WHERE n.status = 'QUEUED')::int AS new_count
+           latest.publication_date AS last_publication_date, parties.plaintiff, parties.defendant,
+           count(DISTINCT cm.id) FILTER (WHERE movement_publication.publication_date = ${today})::int AS new_count
     FROM monitored_cases mc
     JOIN judicial_cases jc ON jc.id = mc.case_id
     JOIN courts c ON c.id = jc.court_id
@@ -337,7 +375,12 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
       WHERE mcf.monitored_case_id = mc.id
     ) folders ON true
     LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
-    LEFT JOIN notifications n ON n.movement_id = cm.id
+    LEFT JOIN judicial_publications movement_publication ON movement_publication.id = cm.publication_id
+    LEFT JOIN LATERAL (
+      SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
+             string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
+      FROM case_parties cp WHERE cp.case_id = jc.id
+    ) parties ON true
     LEFT JOIN LATERAL (
       SELECT jp.publication_date FROM case_movements lm
       JOIN judicial_publications jp ON jp.id = lm.publication_id
@@ -348,7 +391,7 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
         SELECT 1 FROM monitored_case_folders selected
         WHERE selected.monitored_case_id = mc.id AND selected.folder_id = ${selectedFolderId}
       ))
-    GROUP BY mc.id, jc.id, ja.id, c.id, cir.id, folders.folder_ids, folders.folder_names, latest.publication_date
+    GROUP BY mc.id, jc.id, ja.id, c.id, cir.id, folders.folder_ids, folders.folder_names, latest.publication_date, parties.plaintiff, parties.defendant
     ORDER BY COALESCE(latest.publication_date, mc.created_at::date) DESC, mc.created_at DESC
   `;
   return rows.map((row) => ({
@@ -362,6 +405,7 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
     lastSuccessfulCheckAt: row.last_successful_check_at ? isoTimestamp(row.last_successful_check_at) : undefined,
     refreshStartedAt: row.refresh_started_at ? isoTimestamp(row.refresh_started_at) : undefined,
     lastPublicationDate: row.last_publication_date ? isoDate(row.last_publication_date) : undefined, newCount: row.new_count,
+    plaintiff: row.plaintiff ?? undefined, defendant: row.defendant ?? undefined,
   }));
 }
 
@@ -371,7 +415,7 @@ export async function getMonitoredCase(organizationId: string, monitoredCaseId: 
   const rows = await db()`
     SELECT cm.id, jp.id AS publication_id, cm.match_result, cm.detected_at,
            jp.publication_date, jp.agreement_date, jp.promotion_date, jp.official_text,
-           jp.source_url, jp.publication_kind, jp.retrieved_at, ss.sha256 AS snapshot_hash,
+           jp.source_url, jp.publication_kind, jp.retrieved_at, jp.notebook, ss.sha256 AS snapshot_hash,
            fsd.session_date, fsd.result, fsd.judgment, fsd.rapporteur, fsd.session_type, fsd.filter_kind
     FROM case_movements cm
     JOIN judicial_publications jp ON jp.id = cm.publication_id
@@ -391,6 +435,7 @@ export async function getMonitoredCase(organizationId: string, monitoredCaseId: 
       judgment: row.judgment ?? undefined,
       rapporteur: row.rapporteur ?? undefined, sessionType: row.session_type ?? undefined, filterKind: row.filter_kind ?? undefined,
       snapshotHash: row.snapshot_hash,
+      notebook: row.notebook ?? undefined,
     })),
   };
 }
@@ -444,6 +489,7 @@ export async function linkStoredPublicationsToMonitoredCase(organizationId: stri
 
 export async function listNotifications(organizationId: string, userId?: string) {
   const selectedUserId = optionalUuid(userId);
+  const today = dateInMexicoCity();
   return db()`
     SELECT n.id, n.status, n.subject, n.payload, n.created_at, n.sent_at,
            jc.case_number_normalized AS case_number, c.name AS court_name, mc.id AS monitored_case_id
@@ -451,12 +497,14 @@ export async function listNotifications(organizationId: string, userId?: string)
     JOIN users u ON u.id = n.user_id
     JOIN memberships m ON m.user_id = u.id AND m.organization_id = ${organizationId}
     JOIN case_movements cm ON cm.id = n.movement_id
+    JOIN judicial_publications jp ON jp.id = cm.publication_id
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id AND mc.organization_id = ${organizationId}
       AND mc.active AND mc.deleted_at IS NULL
     JOIN judicial_cases jc ON jc.id = mc.case_id
     JOIN courts c ON c.id = jc.court_id
     WHERE n.channel = 'IN_APP'
       AND (${selectedUserId}::uuid IS NULL OR n.user_id = ${selectedUserId})
+      AND jp.publication_date = ${today}
     ORDER BY n.created_at DESC
     LIMIT 100
   `;
@@ -468,7 +516,8 @@ export async function listOrganizationMovements(organizationId: string, from: st
     SELECT cm.id, cm.detected_at, cm.match_result, mc.id AS monitored_case_id,
            jc.case_number_normalized AS case_number, jc.case_type, c.name AS court_name,
            ja.jurisdiction, jp.publication_date, jp.agreement_date, jp.official_text,
-           jp.publication_kind, fsd.session_date, fsd.result, fsd.judgment, folders.folder_name
+           jp.publication_kind, jp.retrieved_at, jp.notebook, fsd.session_date, fsd.result, fsd.judgment, folders.folder_name,
+           parties.plaintiff, parties.defendant
     FROM case_movements cm
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
     JOIN judicial_cases jc ON jc.id = mc.case_id
@@ -476,6 +525,11 @@ export async function listOrganizationMovements(organizationId: string, from: st
     JOIN judicial_authorities ja ON ja.id = jc.authority_id
     JOIN judicial_publications jp ON jp.id = cm.publication_id
     LEFT JOIN federal_session_details fsd ON fsd.publication_id = jp.id
+    LEFT JOIN LATERAL (
+      SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
+             string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
+      FROM case_parties cp WHERE cp.case_id = jc.id
+    ) parties ON true
     LEFT JOIN LATERAL (
       SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name
       FROM monitored_case_folders mcf
@@ -509,6 +563,10 @@ export async function listOrganizationMovements(organizationId: string, from: st
     result: row.result ?? null,
     judgment: row.judgment ?? null,
     folder_name: row.folder_name ?? null,
+    plaintiff: row.plaintiff ?? null,
+    defendant: row.defendant ?? null,
+    retrieved_at: isoTimestamp(row.retrieved_at),
+    notebook: row.notebook ?? null,
   }));
 }
 
@@ -536,14 +594,85 @@ export async function listOperationalRuns() {
   return db()`SELECT * FROM ingestion_runs ORDER BY started_at DESC LIMIT 50`;
 }
 
+export async function searchJudicialCases(input: {
+  organizationId: string;
+  query: string;
+  mode: "CASE" | "PARTY";
+  scope: "JALISCO" | "FEDERAL" | "GENERAL";
+  side?: "plaintiff" | "defendant" | "both";
+  limit?: number;
+}): Promise<JudicialSearchResult[]> {
+  const normalizedQuery = input.mode === "PARTY" ? normalizeName(input.query) : normalizeCaseNumber(input.query).normalized;
+  const jurisdiction = input.scope === "GENERAL" ? null : input.scope;
+  const side = input.side === "plaintiff" || input.side === "defendant" ? input.side : null;
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 200);
+  const rows = await db()`
+    SELECT jc.id AS case_id, watched.id AS monitored_case_id, jc.case_number_normalized, jc.case_type,
+           ja.jurisdiction, ja.code AS provider, c.external_id AS court_external_id, c.name AS court_name, c.court_type,
+           cir.external_id AS circuit_id, cir.name AS circuit_name,
+           parties.plaintiff, parties.defendant, publications.publication_count, publications.last_publication_date
+    FROM judicial_cases jc
+    JOIN judicial_authorities ja ON ja.id = jc.authority_id
+    JOIN courts c ON c.id = jc.court_id
+    LEFT JOIN judicial_circuits cir ON cir.id = c.circuit_id
+    LEFT JOIN monitored_cases watched ON watched.case_id = jc.id AND watched.organization_id = ${input.organizationId}
+      AND watched.active AND watched.deleted_at IS NULL
+    LEFT JOIN LATERAL (
+      SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
+             string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
+      FROM case_parties cp WHERE cp.case_id = jc.id
+    ) parties ON true
+    JOIN LATERAL (
+      SELECT count(*)::int AS publication_count, max(jp.publication_date) AS last_publication_date
+      FROM judicial_publications jp WHERE jp.case_id = jc.id
+    ) publications ON publications.publication_count > 0
+    WHERE (${jurisdiction}::text IS NULL OR ja.jurisdiction = ${jurisdiction})
+      AND (
+        (${input.mode} = 'CASE' AND jc.case_number_normalized = ${normalizedQuery})
+        OR (${input.mode} = 'PARTY' AND EXISTS (
+          SELECT 1 FROM case_parties searched
+          WHERE searched.case_id = jc.id
+            AND (${side}::text IS NULL OR searched.side = ${side})
+            AND (searched.name_normalized ILIKE ${`%${normalizedQuery}%`} OR similarity(searched.name_normalized, ${normalizedQuery}) >= 0.35)
+        ))
+      )
+    ORDER BY publications.last_publication_date DESC NULLS LAST, jc.year DESC, jc.number DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => ({
+    caseId: row.case_id, monitoredCaseId: row.monitored_case_id ?? undefined, number: row.case_number_normalized,
+    caseType: row.case_type, jurisdiction: row.jurisdiction, provider: row.provider,
+    courtExternalId: row.court_external_id, courtName: row.court_name, courtType: row.court_type ?? undefined,
+    circuitId: row.circuit_id ?? undefined, circuitName: row.circuit_name ?? undefined,
+    plaintiff: row.plaintiff ?? undefined, defendant: row.defendant ?? undefined,
+    publicationCount: Number(row.publication_count), lastPublicationDate: row.last_publication_date ? isoDate(row.last_publication_date) : undefined,
+  }));
+}
+
+export async function listJudicialSearchMovements(caseIds: string[]): Promise<JudicialSearchMovement[]> {
+  const ids = [...new Set(caseIds.map((value) => optionalUuid(value)).filter((value): value is string => Boolean(value)))].slice(0, 200);
+  if (!ids.length) return [];
+  const rows = await db()`
+    SELECT jp.case_id, jp.publication_date, jp.agreement_date, jp.official_text, jp.notebook
+    FROM judicial_publications jp
+    WHERE jp.case_id = ANY(${ids}::uuid[]) AND jp.publication_kind = 'AGREEMENT'
+    ORDER BY jp.case_id, jp.publication_date DESC, jp.agreement_date DESC NULLS LAST
+    LIMIT 5000
+  `;
+  return rows.map((row) => ({ caseId: row.case_id, publicationDate: isoDate(row.publication_date), agreementDate: row.agreement_date ? isoDate(row.agreement_date) : undefined, officialText: row.official_text, notebook: row.notebook ?? undefined }));
+}
+
 export async function dashboardData(organizationId: string, userId: string, from: string, to: string) {
+  const today = dateInMexicoCity();
   const [counts, cases, notifications] = await Promise.all([
     db()`
       SELECT count(DISTINCT mc.id)::int AS cases,
-             count(DISTINCT cm.id) FILTER (WHERE cm.detected_at::date BETWEEN ${from} AND ${to})::int AS movements,
-             count(DISTINCT n.id) FILTER (WHERE n.status = 'QUEUED' AND n.channel = 'IN_APP' AND n.user_id = ${userId})::int AS unread
+             count(DISTINCT cm.id) FILTER (WHERE jp.publication_date BETWEEN ${from} AND ${to})::int AS movements,
+             count(DISTINCT cm.id) FILTER (WHERE jp.publication_kind = 'AGREEMENT' AND jp.publication_date = ${today})::int AS agreements_today,
+             count(DISTINCT n.id) FILTER (WHERE n.channel = 'IN_APP' AND n.user_id = ${userId} AND jp.publication_date = ${today})::int AS unread
       FROM monitored_cases mc
       LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
+      LEFT JOIN judicial_publications jp ON jp.id = cm.publication_id
       LEFT JOIN notifications n ON n.movement_id = cm.id
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
     `,

@@ -30,7 +30,7 @@ pnpm db:migrate
 pnpm dev
 ```
 
-Completa `.env.local` con `DATABASE_URL`, `AUTH_SECRET` y `CRON_SECRET`. Para probar cobros y correos agrega también las variables `STRIPE_*`, `BREVO_*` y `OPENAI_*` de `.env.example`. Los comandos CLI cargan ese archivo automáticamente; ya no es necesario ejecutar `export` en cada terminal. Después de migrar, abre `http://localhost:3000/register`; el alta crea la organización y una carpeta General. En desarrollo, si Stripe no está configurado, se permite el acceso local para que puedas probar el producto; en producción Stripe es obligatorio para activar una cuenta.
+Completa `.env.local` con `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET` y `CRON_SECRET`. Para probar cobros y correos agrega también las variables `STRIPE_*`, `BREVO_*` y `OPENAI_*` de `.env.example`. Los comandos CLI cargan ese archivo automáticamente; ya no es necesario ejecutar `export` en cada terminal. Después de migrar, abre `http://localhost:3000/register`; el alta crea la organización y una carpeta General, envía el OTP y conserva la sesión. Una vez verificado el correo, el usuario llega al dashboard y contrata desde el bloqueo de suscripción. En desarrollo, si Stripe no está configurado, se permite el acceso local para que puedas probar el producto; en producción Stripe es obligatorio para activar una cuenta.
 
 La clave de OpenAI es exclusivamente de servidor. Nunca uses una variable `NEXT_PUBLIC_OPENAI_API_KEY` ni la incluyas en Git. Si se omite, la aplicación sigue funcionando y el panel explica que el asistente está pendiente de configuración.
 
@@ -121,7 +121,7 @@ El servidor limita cada mensaje a 4,000 caracteres, conserva como máximo 12 tur
 
 `STRIPE_PRICE_ID` debe apuntar a un precio recurrente mensual de **49900 centavos MXN**. Checkout recopila el método de pago; los webhooks son la fuente de verdad que activa, renueva, bloquea o cancela el acceso. El perfil abre el portal alojado de Stripe, por lo que la aplicación nunca recibe números de tarjeta.
 
-En Brevo verifica el dominio y el remitente definido en `BREVO_SENDER_EMAIL`. Se envían correos de bienvenida, pago confirmado, pago fallido y cancelación; el registro evita duplicados por evento.
+En Brevo verifica `miboletin.lat` y el remitente definido en `BREVO_SENDER_EMAIL`. Se envían códigos OTP de registro y recuperación de contraseña, así como correos de bienvenida, pago confirmado, pago fallido y cancelación; el registro evita duplicados por evento.
 
 ## Verificación
 

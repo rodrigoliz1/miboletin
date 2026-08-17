@@ -4,11 +4,13 @@ import { getBillingSummary } from "@/lib/billing/repository";
 import { getSession } from "@/lib/security/session";
 import { isSameOrigin } from "@/lib/security/request";
 import { rateLimit } from "@/lib/security/rate-limit";
+import { isEmailVerified } from "@/lib/auth/email-verification";
 
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.redirect(new URL("/login?next=subscribe", request.url), 303);
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Origen no permitido" }, { status: 403 });
+  if (!(await isEmailVerified(session.userId))) return NextResponse.redirect(new URL("/verify-email", request.url), 303);
   if (session.role !== "OWNER" && session.role !== "ADMIN") return NextResponse.json({ error: "Sólo un administrador puede gestionar la suscripción" }, { status: 403 });
   if (!rateLimit(`billing:${session.organizationId}`, 5, 60_000).allowed) return NextResponse.redirect(new URL("/subscribe?error=rate", request.url), 303);
   try {
@@ -21,4 +23,3 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL("/subscribe?error=checkout", request.url), 303);
   }
 }
-

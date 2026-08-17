@@ -5,6 +5,7 @@ import { createSession } from "@/lib/security/session";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { findAccountByEmail } from "@/lib/product/repository";
 import { isSameOrigin } from "@/lib/security/request";
+import { isEmailVerified, requestEmailVerification } from "@/lib/auth/email-verification";
 
 const loginSchema = z.object({ email: z.email().transform((value) => value.toLowerCase().trim()), password: z.string().min(8).max(128) });
 export async function POST(request: Request) {
@@ -20,6 +21,12 @@ export async function POST(request: Request) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     return NextResponse.redirect(new URL("/login?error=credentials", request.url), 303);
   }
-  await createSession({ userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName });
+  await createSession({ userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName, sessionVersion: account.sessionVersion });
+  if (!(await isEmailVerified(account.userId))) {
+    try { await requestEmailVerification(account.userId); } catch (error) {
+      if (!(error instanceof Error) || !["OTP_COOLDOWN", "OTP_RATE_LIMIT"].includes(error.message)) console.error("Login verification email could not be sent", error);
+    }
+    return NextResponse.redirect(new URL("/verify-email", request.url), 303);
+  }
   return NextResponse.redirect(new URL("/dashboard", request.url), 303);
 }

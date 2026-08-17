@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ error: "Suscripción inactiva" }, { status: 402 });
   try {
     const circuits = await new FederalProvider().getCircuits();
     return NextResponse.json({ count: circuits.length, circuits, source: "PJF/OAJ Lista a sesión" }, { headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" } });

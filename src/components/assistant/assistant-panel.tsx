@@ -12,6 +12,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { AssistantConversation, AssistantMessage } from "@/lib/assistant/types";
+import { resilientFetch } from "@/lib/client/resilient-fetch";
 
 type ApiResult = {
   ok: boolean;
@@ -28,17 +29,19 @@ const suggestions = [
   "¿Qué autos se publicaron hoy?",
   "¿Cuáles de mis asuntos ya se listaron a sesión?",
   "Resume los movimientos de este mes por carpeta.",
+  "Agrega un expediente a una de mis carpetas.",
 ];
 
 async function api(url: string, init?: RequestInit): Promise<ApiResult> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const response = method === "GET" ? await resilientFetch(url, { cache: "no-store", ...init }, 3) : await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json().catch(() => ({ ok: false, error: "Respuesta no válida del servidor" })) as ApiResult;
   if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible completar la solicitud");
   return payload;
 }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", timeZone: "America/Mexico_City" }).format(new Date(value));
 }
 
 export function AssistantPanel({ firstName }: { firstName: string }) {
@@ -51,6 +54,7 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -101,6 +105,8 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
   }, [messages, sending]);
 
   const createConversation = async () => {
+    if (!loaded || creating) return null;
+    setCreating(true);
     setError(null);
     try {
       const result = await api("/api/assistant/conversations", { method: "POST" });
@@ -113,6 +119,8 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No fue posible crear el chat");
       return null;
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -192,7 +200,7 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
     {open && <div className="assistant-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
       <section className="assistant-drawer" role="dialog" aria-modal="true" aria-label="Asistente de Mi Boletín">
         <aside className="assistant-history" data-mobile-open={historyOpen}>
-          <header><div><Sparkle size={16} weight="fill" /><strong>Mi asistente</strong></div><button type="button" onClick={createConversation} aria-label="Nuevo chat"><Plus size={17} /></button></header>
+          <header><div><Sparkle size={16} weight="fill" /><strong>Mi asistente</strong></div><button type="button" onClick={createConversation} aria-label="Nuevo chat" disabled={!loaded || loading || creating}><Plus size={17} /></button></header>
           <div className="assistant-conversation-list">
             {!conversations.length && loaded && <p className="assistant-history-empty">Tus conversaciones aparecerán aquí.</p>}
             {conversations.map((item) => <div className="assistant-conversation-row" data-active={activeId === item.id} key={item.id}>
@@ -204,7 +212,7 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
               </button>
             </div>)}
           </div>
-          <button className="assistant-new" type="button" onClick={createConversation}><Plus size={15} /> Nuevo chat</button>
+          <button className="assistant-new" type="button" onClick={createConversation} disabled={!loaded || loading || creating}><Plus size={15} /> {creating ? "Creando…" : "Nuevo chat"}</button>
         </aside>
         <div className="assistant-chat">
           <header className="assistant-chat-header">
@@ -219,14 +227,14 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
               {!configured ? <div className="assistant-config-warning"><strong>Falta conectar OpenAI.</strong><small>Agrega <code>OPENAI_API_KEY</code> en las variables del servidor para habilitar respuestas.</small></div> : <div className="assistant-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => void send(suggestion)}>{suggestion}</button>)}</div>}
             </div> : messages.map((item) => <article className={`assistant-message assistant-message-${item.role}`} key={item.id}>
               <span>{item.role === "assistant" ? <Sparkle size={14} weight="fill" /> : firstName.slice(0, 1).toUpperCase()}</span>
-              <div><p>{item.content}</p><time>{new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit" }).format(new Date(item.createdAt))}</time></div>
+              <div><p>{item.content}</p><time>{new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" }).format(new Date(item.createdAt))}</time></div>
             </article>)}
             {sending && <article className="assistant-message assistant-message-assistant"><span><Sparkle size={14} weight="fill" /></span><div className="assistant-thinking"><i /><i /><i /><small>Consultando tus datos</small></div></article>}
             <div ref={endRef} />
           </div>
           {error && <div className="assistant-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Cerrar aviso"><X size={13} /></button></div>}
           <form className="assistant-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-            <textarea ref={inputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Pregunta sobre tus acuerdos o sesiones…" maxLength={4000} rows={1} disabled={!configured} aria-label="Mensaje para el asistente" />
+            <textarea ref={inputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Pregunta sobre tus acuerdos o sesiones…" maxLength={4000} rows={1} disabled={!configured || !loaded || loading} aria-label="Mensaje para el asistente" />
             <button type="submit" disabled={!input.trim() || sending || !configured} aria-label="Enviar mensaje"><PaperPlaneTilt size={18} weight="fill" /></button>
             <small>Verifica siempre el texto y enlace de la fuente oficial. No sustituye asesoría jurídica.</small>
           </form>

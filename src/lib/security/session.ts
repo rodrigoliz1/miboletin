@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { EncryptJWT, jwtDecrypt } from "jose";
 import { cookies } from "next/headers";
 import type { UserRole } from "@/lib/domain/types";
+import { db } from "@/lib/db/client";
 
 const COOKIE_NAME = "mbj_session";
 const fallbackSecret = "development-only-secret-change-before-production";
@@ -13,6 +14,7 @@ export interface SessionPayload {
   role: UserRole;
   organizationId: string;
   organizationName: string;
+  sessionVersion: number;
 }
 
 function secret(): Uint8Array {
@@ -51,7 +53,11 @@ export async function getSession(): Promise<SessionPayload | null> {
       audience: "mi-boletin-judicial",
       issuer: "mi-boletin-judicial",
     });
-    return result.payload as unknown as SessionPayload;
+    const payload = result.payload as unknown as SessionPayload;
+    if (!Number.isInteger(payload.sessionVersion)) return null;
+    const users = await db()`SELECT session_version FROM users WHERE id = ${payload.userId} AND deleted_at IS NULL LIMIT 1`;
+    if (!users.length || Number(users[0].session_version) !== payload.sessionVersion) return null;
+    return payload;
   } catch {
     return null;
   }

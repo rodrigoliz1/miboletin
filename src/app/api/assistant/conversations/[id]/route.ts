@@ -14,7 +14,7 @@ function sameOrigin(request: Request): boolean {
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   const parsed = idSchema.safeParse((await params).id);
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Conversación no válida" }, { status: 400 });
   try {
@@ -30,7 +30,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   if (!sameOrigin(request)) return NextResponse.json({ ok: false, error: "Origen no permitido" }, { status: 403 });
   const parsed = idSchema.safeParse((await params).id);
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Conversación no válida" }, { status: 400 });

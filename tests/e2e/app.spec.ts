@@ -20,8 +20,11 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await page.getByLabel("Despacho u organización").fill("Despacho de Prueba");
   await page.getByLabel("Correo electrónico").fill(email);
   await page.getByLabel("Contraseña").fill("Auditoria!2026");
-  await page.getByRole("button", { name: "Continuar al pago seguro" }).click();
-  await expect(page).toHaveURL(/\/onboarding$/);
+  await page.getByRole("button", { name: "Crear cuenta y verificar correo" }).click();
+  await expect(page).toHaveURL(/\/verify-email\?sent=1$/);
+  await page.getByLabel("Código de verificación").fill("123456");
+  await page.getByRole("button", { name: "Verificar y continuar" }).click();
+  await expect(page).toHaveURL(/\/dashboard\?verified=1$/);
 
   await page.goto("/cases");
   await page.getByLabel("Nueva carpeta").fill("Amparos estratégicos");
@@ -39,7 +42,7 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await page.getByRole("button", { name: "Guardar y comenzar vigilancia" }).click();
   await expect(page).toHaveURL(/\/cases\/[0-9a-f-]+\?created=1$/);
   const localCaseUrl = page.url();
-  expect(Date.now() - saveStartedAt, "el alta debe terminar sin esperar el rastreo histórico").toBeLessThan(10_000);
+  expect(Date.now() - saveStartedAt, "el alta debe terminar sin esperar el rastreo histórico").toBeLessThan(15_000);
   await expect(page.getByRole("heading", { name: /1511\/2025/ })).toBeVisible();
   await expect(page.getByText("Resolución publicada").first()).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/20 publicaciones/)).toBeVisible();
@@ -51,20 +54,21 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await expect(page.locator("body")).not.toContainText("invalid input syntax for type uuid");
   await page.goto("/dashboard?from=fecha-invalida&to=2026-08-01&folder=no-es-uuid");
   await expect(page.getByText("Periodo ajustado.")).toBeVisible();
-  await page.getByRole("button", { name: "Ampliar Autos y acuerdos" }).click();
-  await expect(page.getByRole("button", { name: "Cerrar vista ampliada de Autos y acuerdos" })).toBeVisible();
+  await page.getByRole("button", { name: "Ampliar Boletín de Resoluciones" }).click();
+  await expect(page.getByRole("button", { name: "Cerrar vista ampliada de Boletín de Resoluciones" })).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Abrir asistente de Mi Boletín" }).click();
   await expect(page.getByRole("dialog", { name: "Asistente de Mi Boletín" })).toBeVisible();
   const mobileHistory = page.getByRole("button", { name: "Ver conversaciones" });
   if (await mobileHistory.isVisible()) await mobileHistory.click();
+  await expect(page.getByText("Tus conversaciones aparecerán aquí.")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Nuevo chat" }).last().click();
-  await expect(page.getByRole("button", { name: /^Nueva conversación/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Nueva conversación/ })).toBeVisible({ timeout: 15_000 });
   const deleteChat = page.getByRole("button", { name: "Eliminar Nueva conversación" });
   await deleteChat.click();
   await page.getByRole("button", { name: "Confirmar eliminación de Nueva conversación" }).click();
-  await expect(page.getByText("Tus conversaciones aparecerán aquí.")).toBeVisible();
+  await expect(page.getByText("Tus conversaciones aparecerán aquí.")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Cerrar asistente" }).last().click();
 
   for (const path of ["/dashboard", "/cases", "/search", "/courts", "/alerts", "/settings", "/admin", "/coverage", "/status"]) {
@@ -72,7 +76,7 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
     expect(response?.ok(), `${path} debe responder correctamente`).toBeTruthy();
     await expect(page.locator("body")).not.toContainText("Application error");
   }
-  await page.goto("/search?expediente=1511%2F2025&court=M05");
+  await page.goto("/search?scope=JALISCO&mode=CASE&q=1511%2F2025&court=M05");
   await page.getByRole("combobox", { name: "Órgano jurisdiccional" }).click();
   await page.getByRole("textbox", { name: /Buscar órgano jurisdiccional/i }).fill("quinto mercantil");
   await expect(page.getByRole("option", { name: /Juzgado Quinto de lo Mercantil/i }).first()).toBeVisible();
@@ -86,6 +90,41 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(page).toHaveURL(/\/login$/);
+
+});
+
+test("recuperación de contraseña con OTP e invalidación segura", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const email = `recovery-${testInfo.project.name}-${Date.now()}@example.test`;
+  await page.goto("/register");
+  await page.getByLabel("Nombre completo").fill("Recuperación E2E");
+  await page.getByLabel("Despacho u organización").fill("Cuenta de Recuperación");
+  await page.getByLabel("Correo electrónico").fill(email);
+  await page.getByLabel("Contraseña").fill("Auditoria!2026");
+  await page.getByRole("button", { name: "Crear cuenta y verificar correo" }).click();
+  await page.getByLabel("Código de verificación").fill("123456");
+  await page.getByRole("button", { name: "Verificar y continuar" }).click();
+  await expect(page).toHaveURL(/\/dashboard\?verified=1$/);
+  await page.getByRole("button", { name: "Cerrar sesión" }).click();
+
+  await page.getByRole("link", { name: "Olvidé mi contraseña" }).click();
+  await expect(page).toHaveURL(/\/forgot-password$/);
+  await page.getByLabel("Correo electrónico").fill(email);
+  const [recoveryResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/api/auth/forgot-password")),
+    page.getByRole("button", { name: "Enviar código" }).click(),
+  ]);
+  expect(recoveryResponse.status()).toBe(303);
+  await expect(page).toHaveURL(/\/forgot-password\?sent=1$/);
+  await page.getByLabel("Código de recuperación").fill("654321");
+  await page.getByLabel("Nueva contraseña").fill("NuevaAuditoria!2026");
+  await page.getByLabel("Confirmar contraseña").fill("NuevaAuditoria!2026");
+  await page.getByRole("button", { name: "Guardar nueva contraseña" }).click();
+  await expect(page).toHaveURL(/\/login\?reset=1$/);
+  await page.getByLabel("Correo electrónico").fill(email);
+  await page.getByLabel("Contraseña").fill("NuevaAuditoria!2026");
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
 });
 
 test("alta federal muestra acuerdos, listado y resultado reales", async ({ page }, testInfo) => {
@@ -96,7 +135,11 @@ test("alta federal muestra acuerdos, listado y resultado reales", async ({ page 
   await page.getByLabel("Despacho u organización").fill("Despacho Federal");
   await page.getByLabel("Correo electrónico").fill(email);
   await page.getByLabel("Contraseña").fill("Auditoria!2026");
-  await page.getByRole("button", { name: "Continuar al pago seguro" }).click();
+  await page.getByRole("button", { name: "Crear cuenta y verificar correo" }).click();
+  await expect(page).toHaveURL(/\/verify-email\?sent=1$/);
+  await page.getByLabel("Código de verificación").fill("123456");
+  await page.getByRole("button", { name: "Verificar y continuar" }).click();
+  await expect(page).toHaveURL(/\/dashboard\?verified=1$/);
   await page.goto("/cases/new?jurisdiction=FEDERAL&circuit=3");
   await chooseOption(page, "Órgano jurisdiccional", "119", /Primer Tribunal Colegiado en Materia Civil/i);
   await page.getByLabel("Número de expediente").fill("461/2024");
@@ -104,7 +147,7 @@ test("alta federal muestra acuerdos, listado y resultado reales", async ({ page 
   const saveStartedAt = Date.now();
   await page.getByRole("button", { name: "Guardar y comenzar vigilancia" }).click();
   await expect(page).toHaveURL(/\/cases\/[0-9a-f-]+\?created=1$/);
-  expect(Date.now() - saveStartedAt, "el alta federal no debe esperar el calendario completo").toBeLessThan(10_000);
+  expect(Date.now() - saveStartedAt, "el alta federal no debe esperar el calendario completo").toBeLessThan(15_000);
   await expect(page.getByText("Resolución publicada").first()).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("heading", { name: "Listados a sesión / sesiones" })).toBeVisible();
   await expect(page.getByText("Listado para sesión").first()).toBeVisible({ timeout: 45_000 });

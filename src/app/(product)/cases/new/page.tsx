@@ -6,6 +6,7 @@ import { FederalProvider } from "@/lib/providers/federal/provider";
 import type { CourtCatalogItem } from "@/lib/domain/types";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
 import { SearchableMultiSelect } from "@/components/searchable-multi-select";
+import { FederalCaseSelection, type FederalCourtType } from "@/components/federal-case-selection";
 import { signSelectionOption } from "@/lib/security/selection-token";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ function courtOptions(courts: Array<CourtCatalogItem & { group?: string; courtTy
     COLLEGIATE: "Tribunales colegiados",
     APPEAL: "Tribunales de apelación",
     REGIONAL: "Plenos regionales",
+    LABOR: "Tribunales laborales federales",
     DISTRICT: "Juzgados de distrito y órganos de primera instancia",
     OTHER: "Otros órganos federales",
   };
@@ -50,8 +52,8 @@ export default async function NewCasePage({ searchParams }: { searchParams: Prom
       <form className="panel case-create-form" action="/api/cases" method="post">
         <input type="hidden" name="jurisdiction" value={jurisdiction} />
         {jurisdiction === "FEDERAL" && <><input type="hidden" name="circuit" value={selectedCircuit} /><input type="hidden" name="circuitLabel" value={circuits.find((circuit) => circuit.externalId === selectedCircuit)?.name ?? `Circuito ${selectedCircuit}`} /></>}
-        <SearchableSelect name="court" label="Órgano jurisdiccional" options={courtOptions(jurisdiction === "FEDERAL" ? federalCourts : jaliscoCourts, jurisdiction === "FEDERAL" ? `FEDERAL:${selectedCircuit}:court` : "JALISCO:court")} required searchPlaceholder="Buscar por nombre, materia, municipio o clave…" hint={jurisdiction === "FEDERAL" ? "Incluye juzgados de distrito, tribunales colegiados, tribunales de apelación y plenos regionales. Las sesiones se vigilan cuando el órgano las publica." : "Órganos divididos por materia y conectados al boletín oficial."} />
-        <div className="form-grid"><div className="field"><label htmlFor="number">Número de expediente</label><input id="number" name="number" placeholder="461/2024" required /></div>{jurisdiction === "FEDERAL" ? <SearchableSelect name="caseType" label="Tipo de asunto" options={["Amparo Indirecto", "Amparo Directo", "Amparo en revisión", "Queja", "Reclamación", "Inconformidad", "Conflicto competencial", "Procesos Civiles o Administrativos"].map((type) => ({ value: type, label: type, group: "Tipos de asunto federal" }))} defaultValue="Amparo Directo" required searchPlaceholder="Buscar tipo de asunto…" /> : <div className="field"><label htmlFor="caseType">Tipo de asunto</label><input id="caseType" name="caseType" placeholder="Civil ordinario" required /></div>}</div>
+        {jurisdiction === "FEDERAL" ? <FederalCaseSelection courts={courtOptions(federalCourts, `FEDERAL:${selectedCircuit}:court`).map((option) => ({ ...option, courtType: (federalCourts.find((court) => court.externalId === option.value)?.courtType ?? "OTHER") as FederalCourtType }))} /> : <SearchableSelect name="court" label="Órgano jurisdiccional" options={courtOptions(jaliscoCourts, "JALISCO:court")} required searchPlaceholder="Buscar por nombre, materia, municipio o clave…" hint="Órganos divididos por materia y conectados al boletín oficial." />}
+        <div className="form-grid"><div className="field"><label htmlFor="number">Número de expediente</label><input id="number" name="number" placeholder="461/2024" required /></div>{jurisdiction === "JALISCO" && <div className="field"><label htmlFor="caseType">Tipo de asunto</label><input id="caseType" name="caseType" placeholder="Civil ordinario" required /></div>}</div>
         <SearchableMultiSelect name="folders" label="Carpetas" options={folders.map((folder) => ({ value: folder.id, label: folder.name, group: "Carpetas del despacho", description: `${folder.caseCount} ${folder.caseCount === 1 ? "asunto" : "asuntos"}` }))} defaultValues={folders[0] ? [folders[0].id] : []} required searchPlaceholder="Buscar carpeta…" hint="Puedes guardar el mismo asunto en varias carpetas sin duplicar su vigilancia." />
         <div className="field"><label htmlFor="label">Referencia interna opcional</label><input id="label" name="label" placeholder="Cliente o nombre interno del asunto" /></div>
         <div className="source-scope"><strong>{jurisdiction === "FEDERAL" ? "Histórico federal automático" : "Historial completo del boletín"}</strong><p>{jurisdiction === "FEDERAL" ? "No necesitas indicar fechas. Primero recuperamos los acuerdos oficiales del expediente y, si corresponde a un órgano de sesión, revisamos cuándo se listó, la fecha programada y el sentido publicado." : "No necesitas indicar fechas. Consultaremos por órgano y expediente y conservaremos todos los extractos que entregue el boletín oficial."}</p></div>

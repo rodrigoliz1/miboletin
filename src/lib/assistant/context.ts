@@ -51,7 +51,7 @@ function clipped(value: unknown, length = 900): string {
 export async function buildAssistantContext(organizationId: string, userId: string, question: string) {
   const period = resolveAssistantPeriod(question);
   const caseNumber = requestedCaseNumber(question);
-  const [cases, movements, sessions, alertCount] = await Promise.all([
+  const [cases, movements, sessions, alertCount, folders] = await Promise.all([
     db()`
       SELECT mc.id, jc.case_number_normalized, jc.case_type, jc.status, count(*) OVER()::int AS total_count,
              c.name AS court_name, c.court_type, ja.jurisdiction,
@@ -108,13 +108,16 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       JOIN memberships membership ON membership.user_id = n.user_id
       JOIN case_movements cm ON cm.id = n.movement_id
       JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
+      JOIN judicial_publications jp ON jp.id = cm.publication_id
       WHERE membership.organization_id = ${organizationId}
         AND mc.organization_id = ${organizationId}
         AND n.user_id = ${userId}
         AND n.status = 'QUEUED'
         AND n.channel = 'IN_APP'
+        AND jp.publication_date = ${dateInMexicoCity()}
         AND mc.active AND mc.deleted_at IS NULL
     `,
+    db()`SELECT id, name FROM case_folders WHERE organization_id = ${organizationId} ORDER BY created_at`,
   ]);
 
   return {
@@ -124,6 +127,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
     requestedCaseNumber: caseNumber,
     activeCaseCount: Number(cases[0]?.total_count ?? 0),
     unreadAlertCount: Number(alertCount[0]?.count ?? 0),
+    folders: folders.map((row) => ({ name: row.name })),
     cases: cases.map((row) => ({
       caseNumber: row.case_number_normalized,
       caseType: row.case_type,

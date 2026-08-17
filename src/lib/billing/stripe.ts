@@ -71,6 +71,8 @@ function idOf(value: string | { id: string } | null | undefined): string | undef
 export async function persistStripeSubscription(organizationId: string, subscription: Stripe.Subscription, paidAt?: Date) {
   const item = subscription.items.data[0];
   const price = item?.price;
+  const configuredPrice = process.env.STRIPE_PRICE_ID?.trim();
+  if (!price || !configuredPrice || price.id !== configuredPrice) return false;
   await saveSubscription({
     organizationId,
     subscriptionId: subscription.id,
@@ -85,6 +87,7 @@ export async function persistStripeSubscription(organizationId: string, subscrip
     lastInvoiceId: idOf(subscription.latest_invoice),
     paidAt,
   });
+  return true;
 }
 
 export async function synchronizeCheckoutSession(organizationId: string, sessionId: string) {
@@ -98,4 +101,22 @@ export async function synchronizeCheckoutSession(organizationId: string, session
   if (!subscription || "deleted" in subscription) throw new Error("STRIPE_SUBSCRIPTION_MISSING");
   await persistStripeSubscription(organizationId, subscription, session.payment_status === "paid" ? new Date() : undefined);
   return { session, subscription };
+}
+
+export async function reconcileStripeSubscription(organizationId: string) {
+  const summary = await getBillingSummary(organizationId);
+  if (!summary.customerId) return null;
+  const configuredPrice = process.env.STRIPE_PRICE_ID?.trim();
+  if (!configuredPrice) throw new Error("STRIPE_PRICE_NOT_CONFIGURED");
+  const subscriptions = await stripeClient().subscriptions.list({ customer: summary.customerId, status: "all", limit: 100 });
+  const matching = subscriptions.data
+    .filter((subscription) => subscription.items.data.some((item) => item.price.id === configuredPrice))
+    .sort((a, b) => {
+      const priority = (status: string) => status === "active" ? 3 : status === "trialing" ? 2 : 1;
+      return priority(b.status) - priority(a.status) || b.created - a.created;
+    });
+  const subscription = matching[0];
+  if (!subscription) return null;
+  await persistStripeSubscription(organizationId, subscription);
+  return subscription;
 }

@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.redirect(new URL("/login", request.url), 303);
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Origen no permitido" }, { status: 403 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.redirect(new URL("/subscribe?error=subscription", request.url), 303);
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.redirect(new URL("/subscribe?error=subscription", request.url), 303);
   const form = await request.formData();
   const parsed = schema.safeParse(Object.fromEntries(form));
   const folders = z.array(z.string().uuid()).min(1).max(20).safeParse(form.getAll("folders"));

@@ -30,6 +30,25 @@ export async function answerWithOpenAI(input: {
     reasoning: { effort: "low" },
     text: { verbosity: "medium" },
     max_output_tokens: 1400,
+    tools: [{
+      type: "function",
+      name: "add_monitored_case",
+      description: "Agrega un expediente a una carpeta únicamente cuando el usuario lo solicita de manera explícita e imperativa.",
+      strict: true,
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          folder_name: { type: "string", description: "Nombre de la carpeta indicada por el usuario." },
+          case_number: { type: "string", description: "Número de expediente con año, por ejemplo 1155/2003." },
+          court_name: { type: "string", description: "Nombre completo del órgano jurisdiccional." },
+          jurisdiction: { type: ["string", "null"], enum: ["JALISCO", "FEDERAL", null], description: "Jurisdicción si puede identificarse con certeza." },
+          circuit: { type: ["string", "null"], description: "Circuito federal; null para asuntos locales." },
+          case_type: { type: ["string", "null"], description: "Tipo de asunto si el usuario lo indicó." },
+        },
+        required: ["folder_name", "case_number", "court_name", "jurisdiction", "circuit", "case_type"],
+      },
+    }],
     instructions: [
       "Eres el asistente de Mi Boletín Judicial. Responde en español de México y con precisión profesional.",
       "Tu única fuente factual sobre los asuntos del usuario es CONTEXTO_JUDICIAL. No inventes expedientes, fechas, acuerdos, resultados, estados ni verificaciones.",
@@ -38,13 +57,17 @@ export async function answerWithOpenAI(input: {
       "Cuando informes resultados, indica el periodo consultado y el número de coincidencias. Si no hay datos, dilo sin asumir que no existan en la fuente oficial.",
       "No reveles identificadores internos ni detalles de otras cuentas. No ofrezcas asesoría jurídica ni predigas resoluciones.",
       "Sé conciso, usa listas sólo cuando ayuden y sugiere abrir el expediente dentro de la aplicación para revisar el texto oficial.",
+      "Si el usuario ordena explícitamente agregar o vigilar un expediente y proporciona carpeta, número y órgano, llama add_monitored_case. No llames la función para preguntas, ejemplos hipotéticos o solicitudes ambiguas.",
     ].join("\n"),
     input: `CONTEXTO_JUDICIAL (JSON):\n${JSON.stringify(input.context)}\n\nHISTORIAL RECIENTE:\n${transcript || "Sin mensajes previos."}\n\nPREGUNTA ACTUAL:\n${input.question}`,
   });
+  const actionCall = response.output.find((item) => item.type === "function_call" && item.name === "add_monitored_case");
+  const action = actionCall?.type === "function_call" ? JSON.parse(actionCall.arguments) as { folder_name: string; case_number: string; court_name: string; jurisdiction: "JALISCO" | "FEDERAL" | null; circuit: string | null; case_type: string | null } : undefined;
   const content = response.output_text.trim();
-  if (!content) throw new Error("OPENAI_EMPTY_RESPONSE");
+  if (!content && !action) throw new Error("OPENAI_EMPTY_RESPONSE");
   return {
-    content,
+    content: content || "Voy a verificar los datos y agregar el expediente.",
+    action,
     model,
     responseId: response.id,
     inputTokens: response.usage?.input_tokens,

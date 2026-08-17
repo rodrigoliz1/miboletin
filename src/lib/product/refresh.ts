@@ -4,6 +4,7 @@ import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
 import { db } from "@/lib/db/client";
 import { getMonitoredCase, linkStoredPublicationsToMonitoredCase, listMonitoredCases, tryMarkMonitoredCaseChecking, updateMonitoredSourceStatus } from "@/lib/product/repository";
 import { dispatchJudicialEmails } from "@/lib/email/notifications";
+import { dateInMexicoCity } from "@/lib/product/query";
 
 function monthPairs(from: Date, to: Date): Array<{ year: number; month: number }> {
   const pairs: Array<{ year: number; month: number }> = [];
@@ -46,9 +47,11 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
       if (!watched.circuitId) throw new Error("El asunto federal no tiene circuito asociado");
       const provider = new FederalProvider();
       const now = new Date();
+      const today = dateInMexicoCity(now);
+      const localToday = new Date(`${today}T12:00:00Z`);
       const monitorFrom = new Date(`${watched.monitorFrom}T00:00:00Z`);
       const agreement = await runIngestion(provider, {
-        date: now.toISOString().slice(0, 10),
+        date: today,
         courtExternalId: watched.courtExternalId,
         circuitId: watched.circuitId,
         caseNumber: watched.number,
@@ -58,7 +61,7 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
       results.push(agreement);
       await db()`
         INSERT INTO monitored_case_source_checks (monitored_case_id, filter_kind, checked_date, status, records_found, error_message)
-        VALUES (${monitoredCaseId}, 'expediente', ${now.toISOString().slice(0, 10)}, ${agreement.errors.length ? "FAILED" : "SUCCEEDED"}, ${agreement.recordsFetched}, ${agreement.errors[0] ?? null})
+        VALUES (${monitoredCaseId}, 'expediente', ${today}, ${agreement.errors.length ? "FAILED" : "SUCCEEDED"}, ${agreement.recordsFetched}, ${agreement.errors[0] ?? null})
         ON CONFLICT (monitored_case_id, filter_kind, checked_date) DO UPDATE SET
           status = EXCLUDED.status, records_found = EXCLUDED.records_found,
           error_message = EXCLUDED.error_message, checked_at = now()
@@ -72,7 +75,7 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
         return results;
       }
       for (const filter of ["lista", "sesion"] as const) {
-        const dates = await datesToRefresh(provider, monitoredCaseId, watched.courtExternalId, filter, monitorFrom, now);
+        const dates = await datesToRefresh(provider, monitoredCaseId, watched.courtExternalId, filter, monitorFrom, localToday);
         for (let index = 0; index < dates.length; index += 3) {
           const batch = dates.slice(index, index + 3);
           const checked = await Promise.all(batch.map(async (date) => {
@@ -100,7 +103,7 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
     } else {
       const provider = new JaliscoProvider();
       results.push(await runIngestion(provider, {
-        date: new Date().toISOString().slice(0, 10),
+        date: dateInMexicoCity(),
         courtExternalId: watched.courtExternalId,
         caseNumber: watched.number,
       }));

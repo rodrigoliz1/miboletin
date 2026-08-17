@@ -5,6 +5,7 @@ import { addAssistantReply, addUserAssistantMessage, getAssistantConversation } 
 import { answerWithOpenAI } from "@/lib/assistant/openai";
 import { getSession } from "@/lib/security/session";
 import { hasActiveProductAccess } from "@/lib/billing/access";
+import { executeAddCaseAction } from "@/lib/assistant/actions";
 
 export const maxDuration = 60;
 
@@ -19,7 +20,7 @@ function sameOrigin(request: Request): boolean {
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   if (!sameOrigin(request)) return NextResponse.json({ ok: false, error: "Origen no permitido" }, { status: 403 });
   if (!process.env.OPENAI_API_KEY?.trim()) {
     return NextResponse.json({ ok: false, error: "El Asistente no está disponible temporalmente." }, { status: 503 });
@@ -43,12 +44,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!userMessage) return NextResponse.json({ ok: false, error: "Conversación no encontrada" }, { status: 404 });
 
     const context = await buildAssistantContext(session.organizationId, session.userId, parsedBody.data.message);
-    const answer = await answerWithOpenAI({
+    const generated = await answerWithOpenAI({
       userId: session.userId,
       question: parsedBody.data.message,
       history: existing.messages,
       context,
     });
+    const { action, ...answer } = generated;
+    if (action) {
+      try {
+        const added = await executeAddCaseAction({ organizationId: session.organizationId, userId: session.userId, action });
+        answer.content = `Agregué el expediente ${added.caseNumber} a la carpeta ${added.folderName}. Verifiqué el órgano ${added.courtName} antes de guardarlo. Puedes abrirlo en /cases/${added.id}.`;
+      } catch (actionError) {
+        answer.content = actionError instanceof Error ? `No agregué el expediente: ${actionError.message}` : "No pude verificar los datos necesarios para agregar el expediente.";
+      }
+    }
     const assistantMessage = await addAssistantReply({
       organizationId: session.organizationId,
       userId: session.userId,

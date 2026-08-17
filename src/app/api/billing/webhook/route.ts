@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { billingContact, claimStripeEvent, organizationForStripeCustomer, releaseStripeEvent, saveStripeCustomer } from "@/lib/billing/repository";
 import { persistStripeSubscription, stripeClient } from "@/lib/billing/stripe";
 import { sendTransactionalEmail } from "@/lib/email/brevo";
+import { sendPaymentConfirmation } from "@/lib/billing/notifications";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,16 @@ function idOf(value: string | { id: string } | null | undefined) {
 }
 
 async function organizationForSubscription(subscription: Stripe.Subscription) {
-  return subscription.metadata.organizationId || (idOf(subscription.customer) ? organizationForStripeCustomer(idOf(subscription.customer)!) : null);
+  return subscription.metadata.organizationId || (idOf(subscription.customer) ? organizationForCustomer(idOf(subscription.customer)!) : null);
+}
+
+async function organizationForCustomer(customerId: string) {
+  const stored = await organizationForStripeCustomer(customerId);
+  if (stored) return stored;
+  const customer = await stripeClient().customers.retrieve(customerId);
+  if (customer.deleted || !customer.metadata.organizationId) return null;
+  await saveStripeCustomer(customer.metadata.organizationId, customerId);
+  return customer.metadata.organizationId;
 }
 
 async function notify(organizationId: string, kind: "WELCOME" | "PAYMENT_CONFIRMED" | "PAYMENT_FAILED" | "SUBSCRIPTION_CANCELED", dedupeKey: string, periodEnd?: Date) {
@@ -22,7 +32,8 @@ async function notify(organizationId: string, kind: "WELCOME" | "PAYMENT_CONFIRM
 
 async function latestSubscription(customerId: string) {
   const list = await stripeClient().subscriptions.list({ customer: customerId, status: "all", limit: 10 });
-  return list.data.sort((a, b) => b.created - a.created)[0];
+  const priceId = process.env.STRIPE_PRICE_ID?.trim();
+  return list.data.filter((subscription) => subscription.items.data.some((item) => item.price.id === priceId)).sort((a, b) => b.created - a.created)[0];
 }
 
 export async function POST(request: Request) {
@@ -45,17 +56,16 @@ export async function POST(request: Request) {
         await saveStripeCustomer(organizationId, customerId);
         const subscription = session.subscription ? await stripeClient().subscriptions.retrieve(idOf(session.subscription)!) : await latestSubscription(customerId);
         if (subscription) {
-          await persistStripeSubscription(organizationId, subscription, session.payment_status === "paid" ? new Date() : undefined);
-          const item = subscription.items.data[0];
-          await notify(organizationId, "WELCOME", `welcome:${subscription.id}`, item?.current_period_end ? new Date(item.current_period_end * 1000) : undefined);
+          const persisted = await persistStripeSubscription(organizationId, subscription, session.payment_status === "paid" ? new Date() : undefined);
+          if (persisted && (subscription.status === "active" || subscription.status === "trialing")) await sendPaymentConfirmation(organizationId, subscription);
         }
       }
     } else if (event.type.startsWith("customer.subscription.")) {
       const subscription = event.data.object as Stripe.Subscription;
       const organizationId = await organizationForSubscription(subscription);
       if (organizationId) {
-        await persistStripeSubscription(organizationId, subscription);
-        if (event.type === "customer.subscription.deleted" || subscription.cancel_at_period_end) {
+        const persisted = await persistStripeSubscription(organizationId, subscription);
+        if (persisted && (event.type === "customer.subscription.deleted" || subscription.cancel_at_period_end)) {
           const end = subscription.items.data[0]?.current_period_end;
           await notify(organizationId, "SUBSCRIPTION_CANCELED", `cancel:${subscription.id}:${subscription.canceled_at ?? end ?? event.created}`, end ? new Date(end * 1000) : undefined);
         }
@@ -63,11 +73,12 @@ export async function POST(request: Request) {
     } else if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
       const invoice = event.data.object;
       const customerId = idOf(invoice.customer);
-      const organizationId = customerId ? await organizationForStripeCustomer(customerId) : null;
+      const organizationId = customerId ? await organizationForCustomer(customerId) : null;
       if (organizationId && customerId) {
         const subscription = await latestSubscription(customerId);
-        if (subscription) await persistStripeSubscription(organizationId, subscription, event.type === "invoice.paid" ? new Date(event.created * 1000) : undefined);
-        await notify(organizationId, event.type === "invoice.paid" ? "PAYMENT_CONFIRMED" : "PAYMENT_FAILED", `${event.type}:${invoice.id}`, subscription?.items.data[0]?.current_period_end ? new Date(subscription.items.data[0].current_period_end * 1000) : undefined);
+        const persisted = subscription ? await persistStripeSubscription(organizationId, subscription, event.type === "invoice.paid" ? new Date(event.created * 1000) : undefined) : false;
+        if (persisted && subscription && event.type === "invoice.paid") await sendPaymentConfirmation(organizationId, subscription);
+        if (persisted && event.type === "invoice.payment_failed") await notify(organizationId, "PAYMENT_FAILED", `payment-failed:${invoice.id}`, subscription?.items.data[0]?.current_period_end ? new Date(subscription.items.data[0].current_period_end * 1000) : undefined);
       }
     }
     return NextResponse.json({ received: true });

@@ -40,6 +40,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
       const rawText = typeof rawContainer.rawHtml === "string" ? rawContainer.rawHtml : null;
       const rawPayload = Object.fromEntries(Object.entries(rawContainer).filter(([key]) => key !== "rawHtml"));
       const federalRecord = rawContainer.record && typeof rawContainer.record === "object" ? rawContainer.record as Record<string, unknown> : null;
+      const federalAgreement = rawContainer.agreement && typeof rawContainer.agreement === "object" ? rawContainer.agreement as Record<string, unknown> : null;
       const publicationKind = federalRecord?.filter === "lista" ? "SESSION_LISTED" : federalRecord?.filter === "sesion" ? "SESSION_RESULT" : "AGREEMENT";
       if (!checkedSnapshotRevisions.has(item.snapshotHash)) {
         const previous = await tx`
@@ -102,12 +103,12 @@ export async function persistPublications(provider: string, items: NormalizedPub
       const publications = await tx`
         INSERT INTO judicial_publications (
           case_id, court_id, snapshot_id, external_id, case_number_raw, case_number_normalized,
-          case_type, official_text, publication_date, agreement_date, promotion_date, publication_kind,
+          case_type, official_text, publication_date, agreement_date, promotion_date, publication_kind, notebook,
           retrieved_at, content_hash, source_url
         ) VALUES (
           ${judicialCase.id}, ${court.id}, ${snapshot.id}, ${item.externalId ?? null}, ${item.caseNumberRaw},
           ${item.caseNumberNormalized}, ${item.caseType ?? null}, ${item.officialText}, ${item.publicationDate},
-          ${item.agreementDate ?? null}, ${item.promotionDate ?? null}, ${publicationKind},
+          ${item.agreementDate ?? null}, ${item.promotionDate ?? null}, ${publicationKind}, ${textValue(federalAgreement?.notebook)},
           ${item.retrievedAt}, ${item.contentHash}, ${item.sourceUrl}
         )
         ON CONFLICT (court_id, content_hash) DO NOTHING

@@ -4,6 +4,7 @@ import { refreshMonitoredCase } from "../src/lib/product/refresh";
 import { FederalProvider, isFederalSessionCourt } from "../src/lib/providers/federal/provider";
 import { JaliscoProvider } from "../src/lib/providers/jalisco/provider";
 import { closeDb, db } from "../src/lib/db/client";
+import { dateInMexicoCity } from "../src/lib/product/query";
 
 interface ActiveCase {
   id: string;
@@ -61,7 +62,7 @@ async function dryRunCase(item: ActiveCase, today: string) {
 
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = dateInMexicoCity();
   const cases = await activeCases();
   let succeeded = 0;
   let failed = 0;

@@ -13,7 +13,7 @@ function sameOrigin(request: Request): boolean {
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   try {
     const conversations = await listAssistantConversations(session.organizationId, session.userId);
     return NextResponse.json({ ok: true, conversations, configured: Boolean(process.env.OPENAI_API_KEY?.trim()) });
@@ -26,7 +26,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 });
   if (!sameOrigin(request)) return NextResponse.json({ ok: false, error: "Origen no permitido" }, { status: 403 });
   try {
     const conversation = await createAssistantConversation(session.organizationId, session.userId);

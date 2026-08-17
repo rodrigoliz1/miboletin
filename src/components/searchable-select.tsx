@@ -26,6 +26,7 @@ export function SearchableSelect({
   hint,
   required = false,
   compact = false,
+  onValueChange,
 }: {
   name: string;
   label: string;
@@ -36,6 +37,7 @@ export function SearchableSelect({
   hint?: string;
   required?: boolean;
   compact?: boolean;
+  onValueChange?: (value: string) => void;
 }) {
   const generatedId = React.useId();
   const id = `${name}-${generatedId.replace(/:/g, "")}`;
@@ -112,7 +114,7 @@ export function SearchableSelect({
             type="button"
             role="option"
             aria-selected={option.value === value}
-            onClick={() => { setValue(option.value); setOpen(false); setQuery(""); trigger.current?.focus(); }}
+            onClick={() => { setValue(option.value); onValueChange?.(option.value); setOpen(false); setQuery(""); trigger.current?.focus(); }}
           >
             <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
             {option.value === value && <Check size={15} weight="bold" aria-hidden="true" />}

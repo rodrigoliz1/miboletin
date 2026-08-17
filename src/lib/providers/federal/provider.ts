@@ -22,7 +22,7 @@ export interface FederalCircuit {
 export interface FederalCourt extends CourtCatalogItem {
   jurisdiction: "FEDERAL";
   circuit: string;
-  courtType: "DISTRICT" | "COLLEGIATE" | "APPEAL" | "REGIONAL" | "OTHER";
+  courtType: "DISTRICT" | "COLLEGIATE" | "APPEAL" | "REGIONAL" | "LABOR" | "OTHER";
   sessionCapable: boolean;
 }
 
@@ -92,10 +92,11 @@ function hasChallenge(html: string): boolean {
 }
 
 export function inferFederalCourtType(name: string): FederalCourt["courtType"] {
+  if (/tribunal laboral federal/i.test(name)) return "LABOR";
   if (/apelaci[oó]n/i.test(name)) return "APPEAL";
   if (/colegiado/i.test(name)) return "COLLEGIATE";
   if (/pleno regional/i.test(name)) return "REGIONAL";
-  if (/juzgado .+ distrito|juzgado de distrito|tribunal laboral federal|centro de justicia penal federal/i.test(name)) return "DISTRICT";
+  if (/juzgado .+ distrito|juzgado de distrito|centro de justicia penal federal/i.test(name)) return "DISTRICT";
   return "OTHER";
 }
 
@@ -105,8 +106,22 @@ export function isFederalSessionCourt(courtType: string | undefined): boolean {
 
 function agreementTypeIds(caseType: string | undefined): string[] {
   const normalized = caseType?.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? "";
+  if (normalized.includes("amparo contra leyes")) return ["10"];
   if (normalized.includes("amparo indirecto")) return ["1"];
   if (normalized.includes("amparo directo")) return ["10"];
+  if (normalized.includes("conflictos de acumulacion")) return ["17"];
+  if (normalized.includes("impedimento")) return ["13"];
+  if (normalized.includes("incidentes de inejecucion")) return ["23"];
+  if (normalized.includes("reconocimiento de inocencia")) return ["26"];
+  if (normalized.includes("repeticion del acto reclamado")) return ["24"];
+  if (normalized.includes("revision contenciosa")) return ["14"];
+  if (normalized.includes("revision fiscal")) return ["16"];
+  if (normalized.includes("causa penal")) return ["2"];
+  if (normalized.includes("declaratoria general de inconstitucionalidad")) return ["71"];
+  if (normalized.includes("ejecucion de penas")) return ["67"];
+  if (normalized.includes("juicio oral mercantil")) return ["68"];
+  if (normalized.includes("medidas precautorias")) return ["18"];
+  if (normalized.includes("extradicion")) return ["19"];
   if (normalized.includes("revision")) return ["11"];
   if (normalized.includes("conflicto") || normalized.includes("competencial")) return ["12"];
   if (normalized.includes("queja")) return ["15"];
@@ -138,7 +153,7 @@ function courtNameFromCaseTitle(title: string): string {
 export function parseFederalAgreementHistoryHtml(
   html: string,
   params: { caseNumber: string; caseType: string; courtExternalId: string; sourceUrl: string },
-): { matched: boolean; courtName?: string; records: FederalAgreementRecord[]; caseSession?: FederalCaseSession } {
+): { matched: boolean; courtName?: string; records: FederalAgreementRecord[]; caseSession?: FederalCaseSession; parties?: { plaintiff?: string; defendant?: string } } {
   if (hasChallenge(html)) throw new ProviderError("SOURCE_ACCESS_RESTRICTED", "La ficha federal respondió con CAPTCHA; la consulta se abortó", false);
   if (/No existe el n[uú]mero de expediente/i.test(html)) return { matched: false, records: [] };
   const $ = cheerio.load(html);
@@ -160,7 +175,11 @@ export function parseFederalAgreementHistoryHtml(
     judgmentSense: fieldValue(/^Sentido sentencia$/i),
   };
   const caseSession = Object.values(sessionRaw).some(Boolean) ? sessionRaw : undefined;
-  if (!headers.length) return { matched: true, courtName: courtNameFromCaseTitle(title), records: [], caseSession };
+  const parties = {
+    plaintiff: fieldValue(/^(Quejoso|Actor|Promovente|Recurrente|Parte actora)$/i),
+    defendant: fieldValue(/^(Autoridad responsable|Tercero interesado|Demandado|Parte demandada)$/i),
+  };
+  if (!headers.length) return { matched: true, courtName: courtNameFromCaseTitle(title), records: [], caseSession, parties };
   if (!["No.", "Fecha del Auto", "Tipo Cuaderno", "Fecha de publicación", "Resumen"].every((label) => headers.includes(label))) {
     throw new ProviderError("SCHEMA_DRIFT", "La ficha federal de acuerdos cambió de columnas", false);
   }
@@ -186,7 +205,7 @@ export function parseFederalAgreementHistoryHtml(
       detailUrl: args.length === 7 ? agreementDetailUrl(args) : params.sourceUrl,
     });
   });
-  return { matched: true, courtName: courtNameFromCaseTitle(title), records, caseSession };
+  return { matched: true, courtName: courtNameFromCaseTitle(title), records, caseSession, parties };
 }
 
 function parseCaseCell(text: string): { caseType: string; caseNumber: string } | null {
@@ -381,7 +400,7 @@ export class FederalProvider implements JudicialSourceProvider {
       caseNumberRaw: record.caseNumber,
       caseType: record.caseType,
       officialText: federalExtract(record),
-      parties: { plaintiff: record.complainant },
+      parties: { plaintiff: record.complainant, defendant: record.authority },
       publicationDate: record.listDate,
       agreementDate: record.sessionDate,
       sourceUrl: this.officialPage,
@@ -409,6 +428,7 @@ export class FederalProvider implements JudicialSourceProvider {
         caseNumberRaw: caseNumber,
         caseType: caseType ?? "Asunto federal",
         officialText: record.summary,
+        parties: parsed.parties,
         publicationDate: record.publicationDate,
         agreementDate: record.agreementDate,
         sourceUrl: record.detailUrl,

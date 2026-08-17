@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { resilientFetch } from "@/lib/client/resilient-fetch";
 
 type RefreshPhase = "starting" | "checking" | "continuing" | "done" | "error";
 
@@ -43,12 +44,12 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
 
       if (shouldRequest) {
         window.sessionStorage.setItem(storageKey, String(Date.now()));
-        const response = await fetch("/api/refresh", {
+        const response = await resilientFetch("/api/refresh", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ caseId, force }),
           signal: controller.signal,
-        });
+        }, 2);
         const payload = await response.json() as { ok?: boolean; error?: string };
         if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible actualizar las fuentes");
       }
@@ -61,11 +62,11 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
       setPhase("checking");
       for (let attempt = 0; attempt < 150; attempt += 1) {
         await wait(attempt === 0 ? 250 : 2_000, controller.signal);
-        const response = await fetch(`/api/cases/${caseId}/status`, {
+        const response = await resilientFetch(`/api/cases/${caseId}/status`, {
           headers: { Accept: "application/json" },
           cache: "no-store",
           signal: controller.signal,
-        });
+        }, 3);
         const payload = await response.json() as { ok?: boolean; error?: string; sourceStatus?: string; movementCount?: number };
         if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible conocer el avance de la revisión");
         if (typeof payload.movementCount === "number") {

@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSession } from "@/lib/security/session";
 import { createAccount } from "@/lib/product/repository";
-import { createSubscriptionCheckout } from "@/lib/billing/stripe";
-import { billingIsConfigured } from "@/lib/billing/repository";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { isSameOrigin } from "@/lib/security/request";
+import { requestEmailVerification } from "@/lib/auth/email-verification";
 
 const schema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -20,18 +19,15 @@ export async function POST(request: Request) {
   const parsed = schema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return NextResponse.redirect(new URL("/register?error=validation", request.url), 303);
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  if (!rateLimit(`register:${forwarded}`, 5, 60 * 60_000).allowed) return NextResponse.redirect(new URL("/register?error=rate", request.url), 303);
+  if (process.env.E2E_TEST_MODE !== "1" && !rateLimit(`register:${forwarded}`, 5, 60 * 60_000).allowed) return NextResponse.redirect(new URL("/register?error=rate", request.url), 303);
   let account;
   try { account = await createAccount(parsed.data); } catch { return NextResponse.redirect(new URL("/register?error=account", request.url), 303); }
-  await createSession({ userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName });
-  if (billingIsConfigured() && process.env.E2E_TEST_MODE !== "1") {
-    try {
-      const checkout = await createSubscriptionCheckout({ organizationId: account.organizationId, userId: account.userId, email: account.email, name: account.name, organizationName: account.organizationName });
-      return NextResponse.redirect(checkout, 303);
-    } catch (error) {
-      console.error("Registration checkout could not be created", error);
-      return NextResponse.redirect(new URL("/subscribe?error=checkout", request.url), 303);
-    }
+  await createSession({ userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName, sessionVersion: account.sessionVersion });
+  try {
+    await requestEmailVerification(account.userId);
+    return NextResponse.redirect(new URL("/verify-email?sent=1", request.url), 303);
+  } catch (error) {
+    console.error("Verification email could not be sent", error);
+    return NextResponse.redirect(new URL("/verify-email?error=delivery", request.url), 303);
   }
-  return NextResponse.redirect(new URL("/onboarding", request.url), 303);
 }

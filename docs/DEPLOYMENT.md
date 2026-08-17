@@ -14,12 +14,12 @@
 2. Configurar las variables de `.env.example` en Vercel y los secretos de vigilancia en GitHub.
 3. Ejecutar `pnpm db:migrate` desde una tarea de release con acceso exclusivo.
 4. Desplegar Next.js y confirmar `/status`.
-5. Activar el workflow **Vigilancia judicial**; ya está programado a las 08:00, 11:00, 14:00, 17:00 y 20:00 de Ciudad de México.
+5. Activar el workflow **Vigilancia judicial**; ya está programado a las 08:00, 09:00, 11:00, 14:00, 17:00 y 20:00, hora de Guadalajara.
 6. Ejecutarlo manualmente una vez desde Actions y revisar que termine sin errores.
 7. Ejecutar un backfill federal acotado con `--dry-run`, revisar el snapshot y después persistirlo.
 8. Registrar una cuenta de staging, un expediente federal controlado y comprobar DB -> matching -> alerta -> UI antes de habilitar notificaciones de producción.
 
-Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y `BREVO_SENDER_NAME`. Para el Asistente: `OPENAI_API_KEY` y `OPENAI_MODEL`. Recomendadas: `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
+Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y `BREVO_SENDER_NAME`. Para el Asistente: `OPENAI_API_KEY` y `OPENAI_MODEL`. Recomendadas: `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
 
 No ejecutar ingestión masiva desde funciones serverless con timeout. Los jobs deben ser reentrantes e idempotentes.
 
@@ -62,7 +62,7 @@ Después, en Vercel:
 7. En Stripe Workbench registra `https://TU-DOMINIO/api/billing/webhook`; escucha `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`. Copia el secreto de firma a `STRIPE_WEBHOOK_SECRET`.
 8. Activa en Stripe Customer Portal la actualización del método de pago y la cancelación al final del periodo.
 9. En Brevo autentica el dominio, verifica el remitente y crea una clave transaccional con el menor alcance necesario.
-10. Comprueba registro → Checkout → dashboard, portal de facturación, renovación, bloqueo por vencimiento, alta/borrado de expediente, carpetas múltiples, filtros, conversaciones y una pregunta de prueba.
+10. Comprueba registro → OTP → dashboard bloqueado → Checkout → retorno automático al dashboard habilitado, correo de confirmación, portal de facturación, renovación, bloqueo por vencimiento, alta/borrado de expediente, carpetas múltiples, filtros, conversaciones y una pregunta de prueba.
 
 Para desplegar también desde la terminal:
 

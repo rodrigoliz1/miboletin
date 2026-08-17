@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const wantsJson = request.headers.get("accept")?.includes("application/json");
   if (!session) return wantsJson ? NextResponse.json({ ok: false, error: "Sesión no válida" }, { status: 401 }) : NextResponse.redirect(new URL("/login", request.url), 303);
   if (!isSameOrigin(request)) return NextResponse.json({ ok: false, error: "Origen no permitido" }, { status: 403 });
-  if (!(await hasActiveProductAccess(session.organizationId))) return wantsJson ? NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 }) : NextResponse.redirect(new URL("/subscribe?error=subscription", request.url), 303);
+  if (!(await hasActiveProductAccess(session.organizationId, session.userId))) return wantsJson ? NextResponse.json({ ok: false, error: "Suscripción inactiva" }, { status: 402 }) : NextResponse.redirect(new URL("/subscribe?error=subscription", request.url), 303);
   try {
     if (request.headers.get("content-type")?.includes("application/json")) {
       const parsed = jsonSchema.safeParse(await request.json());
