@@ -14,6 +14,8 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   const email = `audit-${testInfo.project.name}-${Date.now()}@example.test`;
 
   await page.goto("/");
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /maximum-scale=1/);
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /user-scalable=no/);
   await expect(page.getByRole("heading", { name: "El boletín, bajo control." })).toBeVisible();
   await expect(page.getByRole("link", { name: "Solicitar información por WhatsApp" })).toHaveAttribute("href", /wa\.me\/526692122543/);
   await page.goto("/register");
@@ -103,6 +105,9 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   const overflow = await messageViewport.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY }));
   expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
   expect(overflow.overflowY).toBe("auto");
+  if (testInfo.project.name === "mobile-chromium") {
+    await expect(page.getByLabel("Mensaje para el asistente")).toHaveCSS("font-size", "16px");
+  }
   await messageViewport.hover();
   await page.mouse.wheel(0, -900);
   const drawerAfterScroll = await assistantDrawer.boundingBox();

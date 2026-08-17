@@ -197,8 +197,11 @@ export async function listFolders(organizationId: string): Promise<FolderRecord[
     FROM case_folders f
     LEFT JOIN monitored_case_folders mcf ON mcf.folder_id = f.id
     LEFT JOIN monitored_cases mc ON mc.id = mcf.monitored_case_id AND mc.active AND mc.deleted_at IS NULL
+    LEFT JOIN judicial_cases watched ON watched.id = mc.case_id
+    LEFT JOIN judicial_authorities watched_authority ON watched_authority.id = watched.authority_id
     LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
     LEFT JOIN judicial_publications jp ON jp.id = cm.publication_id
+      AND (watched_authority.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
     WHERE f.organization_id = ${organizationId}
     GROUP BY f.id
     ORDER BY f.created_at ASC
@@ -378,6 +381,7 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
     ) folders ON true
     LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
     LEFT JOIN judicial_publications movement_publication ON movement_publication.id = cm.publication_id
+      AND (ja.jurisdiction <> 'FEDERAL' OR movement_publication.case_id = mc.case_id)
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
@@ -386,7 +390,9 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
     LEFT JOIN LATERAL (
       SELECT jp.publication_date FROM case_movements lm
       JOIN judicial_publications jp ON jp.id = lm.publication_id
-      WHERE lm.monitored_case_id = mc.id ORDER BY jp.publication_date DESC, jp.retrieved_at DESC LIMIT 1
+      WHERE lm.monitored_case_id = mc.id
+        AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
+      ORDER BY jp.publication_date DESC, jp.retrieved_at DESC LIMIT 1
     ) latest ON true
     WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
       AND (${selectedFolderId}::uuid IS NULL OR EXISTS (
@@ -424,6 +430,7 @@ export async function getMonitoredCase(organizationId: string, monitoredCaseId: 
     JOIN source_snapshots ss ON ss.id = jp.snapshot_id
     LEFT JOIN federal_session_details fsd ON fsd.publication_id = jp.id
     WHERE cm.monitored_case_id = ${monitoredCaseId}
+      AND (${cases[0].jurisdiction} <> 'FEDERAL' OR jp.case_id = ${cases[0].caseId})
     ORDER BY COALESCE(fsd.session_date, jp.agreement_date, jp.publication_date) DESC, jp.retrieved_at DESC
   `;
   return {
@@ -505,10 +512,12 @@ export async function listNotifications(organizationId: string, userId?: string)
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id AND mc.organization_id = ${organizationId}
       AND mc.active AND mc.deleted_at IS NULL
     JOIN judicial_cases jc ON jc.id = mc.case_id
+    JOIN judicial_authorities ja ON ja.id = jc.authority_id
     JOIN courts c ON c.id = jc.court_id
     WHERE n.channel = 'IN_APP'
       AND (${selectedUserId}::uuid IS NULL OR n.user_id = ${selectedUserId})
       AND jp.publication_date = ${today}
+      AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
     ORDER BY n.created_at DESC
     LIMIT 100
   `;
@@ -543,6 +552,7 @@ export async function listOrganizationMovements(organizationId: string, from: st
     WHERE mc.organization_id = ${organizationId}
       AND mc.active AND mc.deleted_at IS NULL
       AND jp.publication_date BETWEEN ${from} AND ${to}
+      AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
       AND (${selectedFolderId}::uuid IS NULL OR EXISTS (
         SELECT 1 FROM monitored_case_folders selected
         WHERE selected.monitored_case_id = mc.id AND selected.folder_id = ${selectedFolderId}
@@ -675,8 +685,11 @@ export async function dashboardData(organizationId: string, userId: string, from
              count(DISTINCT cm.id) FILTER (WHERE jp.publication_kind = 'AGREEMENT' AND jp.publication_date = ${today})::int AS agreements_today,
              count(DISTINCT n.id) FILTER (WHERE n.channel = 'IN_APP' AND n.user_id = ${userId} AND jp.publication_date = ${today})::int AS unread
       FROM monitored_cases mc
+      LEFT JOIN judicial_cases watched ON watched.id = mc.case_id
+      LEFT JOIN judicial_authorities watched_authority ON watched_authority.id = watched.authority_id
       LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
       LEFT JOIN judicial_publications jp ON jp.id = cm.publication_id
+        AND (watched_authority.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
       LEFT JOIN notifications n ON n.movement_id = cm.id
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
     `,
@@ -720,9 +733,13 @@ export async function monitoredCaseRefreshStatus(organizationId: string, monitor
   const rows = await db()`
     SELECT mc.source_status, mc.source_message, mc.refresh_started_at,
            mc.last_checked_at, mc.last_successful_check_at,
-           count(cm.id)::int AS movement_count
+           count(jp.id)::int AS movement_count
     FROM monitored_cases mc
+    JOIN judicial_cases watched ON watched.id = mc.case_id
+    JOIN judicial_authorities watched_authority ON watched_authority.id = watched.authority_id
     LEFT JOIN case_movements cm ON cm.monitored_case_id = mc.id
+    LEFT JOIN judicial_publications jp ON jp.id = cm.publication_id
+      AND (watched_authority.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
     WHERE mc.id = ${monitoredCaseId}
       AND mc.organization_id = ${organizationId}
       AND mc.active

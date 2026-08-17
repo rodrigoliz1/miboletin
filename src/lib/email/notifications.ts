@@ -14,10 +14,12 @@ export async function dispatchJudicialEmails(organizationId: string, monitoredCa
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id AND mc.active AND mc.deleted_at IS NULL
     JOIN organizations o ON o.id = mc.organization_id
     JOIN judicial_cases jc ON jc.id = mc.case_id
+    JOIN judicial_authorities ja ON ja.id = jc.authority_id
     JOIN courts c ON c.id = jc.court_id
     JOIN judicial_publications jp ON jp.id = cm.publication_id
     WHERE mc.organization_id = ${organizationId}
       AND n.channel = 'EMAIL' AND n.status = 'QUEUED'
+      AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
       AND (${monitoredCaseId ?? null}::uuid IS NULL OR mc.id = ${monitoredCaseId ?? null}::uuid)
     ORDER BY n.created_at
     LIMIT 100
@@ -42,4 +44,3 @@ export async function dispatchJudicialEmails(organizationId: string, monitoredCa
   }
   return { sent, failed };
 }
-

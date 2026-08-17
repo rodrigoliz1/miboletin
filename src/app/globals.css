@@ -931,6 +931,7 @@ button:active, .button:active { transform: translateY(1px); }
   .assistant-messages { padding: 20px 14px; }
   .assistant-welcome { margin-top: 7vh; }
   .assistant-composer { margin-inline: 10px; margin-bottom: 10px; }
+  .assistant-composer textarea { font-size: 16px; }
   .commercial-pricing, .pricing-hero { width: calc(100% - 28px); }
   .commercial-pricing article, .pricing-card { padding: 25px 20px; box-shadow: 8px 9px 0 var(--paper-muted); }
   .pricing-copy h1 { font-size: 47px; }

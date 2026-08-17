@@ -1,7 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const siteUrl = process.env.APP_URL ?? "https://www.miboletin.lat";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#722f37",
+};
 
 export const metadata: Metadata = {
   title: { default: "Mi Boletín Judicial", template: "%s | Mi Boletín Judicial" },
@@ -33,7 +41,6 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es-MX">
-      <head><meta name="theme-color" content="#722f37" /></head>
       <body>{children}</body>
     </html>
   );

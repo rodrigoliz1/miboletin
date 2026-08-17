@@ -7,6 +7,7 @@ import { getSession } from "@/lib/security/session";
 import { dashboardData, listFolders, listOrganizationMovements, type OrganizationMovementRecord } from "@/lib/product/repository";
 import { dateInMexicoCity, monthStartInMexicoCity, normalizeDateRange, optionalUuid } from "@/lib/product/query";
 import { formatGuadalajaraDateTime } from "@/lib/product/query";
+import { selectCurrentSessionMovements } from "@/lib/product/judicial-display";
 
 export const dynamic = "force-dynamic";
 
@@ -40,14 +41,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const agreements = movements.filter((movement) => movement.publication_kind === "AGREEMENT");
   const localAgreements = agreements.filter((movement) => movement.jurisdiction === "JALISCO");
   const federalAgreements = agreements.filter((movement) => movement.jurisdiction === "FEDERAL");
-  const sessionKeys = new Set<string>();
-  const sessions = movements.filter((movement) => {
-    if (movement.publication_kind === "AGREEMENT") return false;
-    const key = [movement.monitored_case_id, movement.publication_kind, movement.publication_date, movement.session_date].join("|");
-    if (sessionKeys.has(key)) return false;
-    sessionKeys.add(key);
-    return true;
-  });
+  const sessionGroups = new Map<string, OrganizationMovementRecord[]>();
+  for (const movement of movements) {
+    if (movement.publication_kind === "AGREEMENT") continue;
+    const group = sessionGroups.get(movement.monitored_case_id) ?? [];
+    group.push(movement);
+    sessionGroups.set(movement.monitored_case_id, group);
+  }
+  const sessions = [...sessionGroups.values()].flatMap((group) => selectCurrentSessionMovements(group.map((movement) => ({
+    id: movement.id,
+    publicationKind: movement.publication_kind,
+    publicationDate: movement.publication_date,
+    sessionDate: movement.session_date ?? undefined,
+    movement,
+  }))).map((selected) => selected.movement));
   const now = new Date();
   const today = dateInMexicoCity(now);
   const todayAgreementCount = Number(data.counts.agreements_today ?? 0);

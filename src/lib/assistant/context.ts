@@ -82,6 +82,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
         AND jp.publication_date BETWEEN ${period.from} AND ${period.to}
+        AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY jp.publication_date DESC, jp.retrieved_at DESC
       LIMIT 300
@@ -93,11 +94,13 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       FROM case_movements cm
       JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
       JOIN judicial_cases jc ON jc.id = mc.case_id
+      JOIN judicial_authorities ja ON ja.id = jc.authority_id
       JOIN courts c ON c.id = jc.court_id
       JOIN judicial_publications jp ON jp.id = cm.publication_id
       JOIN federal_session_details fsd ON fsd.publication_id = jp.id
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
+        AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY COALESCE(fsd.session_date, jp.publication_date) DESC
       LIMIT 200
@@ -108,6 +111,8 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       JOIN memberships membership ON membership.user_id = n.user_id
       JOIN case_movements cm ON cm.id = n.movement_id
       JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
+      JOIN judicial_cases watched ON watched.id = mc.case_id
+      JOIN judicial_authorities watched_authority ON watched_authority.id = watched.authority_id
       JOIN judicial_publications jp ON jp.id = cm.publication_id
       WHERE membership.organization_id = ${organizationId}
         AND mc.organization_id = ${organizationId}
@@ -115,6 +120,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
         AND n.status = 'QUEUED'
         AND n.channel = 'IN_APP'
         AND jp.publication_date = ${dateInMexicoCity()}
+        AND (watched_authority.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND mc.active AND mc.deleted_at IS NULL
     `,
     db()`SELECT id, name FROM case_folders WHERE organization_id = ${organizationId} ORDER BY created_at`,
