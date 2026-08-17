@@ -46,7 +46,7 @@ export async function answerWithOpenAI(input: {
             case_number: { type: "string", description: "Número de expediente con año, por ejemplo 1155/2003." },
             court_name: { type: "string", description: "Nombre completo del órgano jurisdiccional." },
             jurisdiction: { type: ["string", "null"], enum: ["JALISCO", "FEDERAL", null], description: "Jurisdicción si puede identificarse con certeza." },
-            circuit: { type: ["string", "null"], description: "Circuito federal; null para asuntos locales." },
+            circuit: { type: ["string", "null"], description: "Circuito federal sólo si fue indicado o puede identificarse con certeza; puede ser null aunque el asunto sea federal." },
             case_type: { type: ["string", "null"], description: "Tipo de asunto si el usuario lo indicó." },
           },
           required: ["folder_name", "case_number", "court_name", "jurisdiction", "circuit", "case_type"],
@@ -63,6 +63,8 @@ export async function answerWithOpenAI(input: {
       "No reveles identificadores internos ni detalles de otras cuentas. No ofrezcas asesoría jurídica ni predigas resoluciones.",
       "Sé conciso, usa listas sólo cuando ayuden y sugiere abrir el expediente dentro de la aplicación para revisar el texto oficial.",
       "Si el usuario ordena explícitamente agregar o vigilar uno o varios expedientes y proporciona carpeta, número y órgano para cada uno, llama add_monitored_cases una sola vez con todos. No llames la función para preguntas, ejemplos hipotéticos o solicitudes ambiguas.",
+      "No inventes el circuito. Conserva literalmente el nombre completo del órgano proporcionado; el servidor lo contrastará con el catálogo oficial y resolverá su circuito.",
+      "Clasifica como FEDERAL a todo Juzgado de Distrito, Tribunal Colegiado, Tribunal Colegiado de Apelación, Tribunal Laboral Federal o Pleno Regional, aunque su nombre mencione un estado. Los juzgados del Poder Judicial de Jalisco son JALISCO.",
     ].join("\n"),
     input: `CONTEXTO_JUDICIAL (JSON):\n${JSON.stringify(input.context)}\n\nHISTORIAL RECIENTE:\n${transcript || "Sin mensajes previos."}\n\nPREGUNTA ACTUAL:\n${input.question}`,
   });

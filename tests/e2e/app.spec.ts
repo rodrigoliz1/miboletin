@@ -72,6 +72,45 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await expect(page.getByText("Tus conversaciones aparecerán aquí.")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Cerrar asistente" }).last().click();
 
+  await page.reload();
+  const longConversationId = "11111111-1111-4111-8111-111111111111";
+  const now = new Date().toISOString();
+  const longMessages = Array.from({ length: 36 }, (_, index) => ({
+    id: `message-${index}`,
+    role: index % 2 ? "assistant" : "user",
+    content: index === 17
+      ? `Texto oficial extenso ${"EXPEDIENTE-SIN-ESPACIOS-".repeat(22)}`
+      : `Mensaje ${index + 1}. Revisión del expediente y sus publicaciones oficiales.`,
+    createdAt: now,
+  }));
+  await page.route("**/api/assistant/conversations**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (route.request().method() === "GET" && pathname === "/api/assistant/conversations") {
+      await route.fulfill({ json: { ok: true, configured: true, conversations: [{ id: longConversationId, title: "Conversación extensa", createdAt: now, updatedAt: now }] } });
+      return;
+    }
+    if (route.request().method() === "GET" && pathname === `/api/assistant/conversations/${longConversationId}`) {
+      await route.fulfill({ json: { ok: true, messages: longMessages } });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Abrir asistente de Mi Boletín" }).click();
+  const assistantDrawer = page.getByRole("dialog", { name: "Asistente de Mi Boletín" });
+  const messageViewport = page.getByRole("log", { name: "Mensajes de la conversación" });
+  await expect(page.getByText("Mensaje 36.")).toBeVisible({ timeout: 15_000 });
+  const drawerBeforeScroll = await assistantDrawer.boundingBox();
+  const overflow = await messageViewport.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY }));
+  expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
+  expect(overflow.overflowY).toBe("auto");
+  await messageViewport.hover();
+  await page.mouse.wheel(0, -900);
+  const drawerAfterScroll = await assistantDrawer.boundingBox();
+  expect(drawerAfterScroll).toEqual(drawerBeforeScroll);
+  await expect(page.getByLabel("Mensaje para el asistente")).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar asistente" }).last().click();
+  await page.unroute("**/api/assistant/conversations**");
+
   for (const path of ["/dashboard", "/cases", "/search", "/courts", "/alerts", "/settings", "/admin", "/coverage", "/status"]) {
     const response = await page.goto(path);
     expect(response?.ok(), `${path} debe responder correctamente`).toBeTruthy();

@@ -58,7 +58,7 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const loadConversation = async (id: string) => {
@@ -97,13 +97,23 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
 
   useEffect(() => {
     if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const viewport = messagesRef.current;
+    if (!viewport) return;
+    const frame = window.requestAnimationFrame(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: sending ? "smooth" : "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [messages, sending]);
 
   const createConversation = async () => {
@@ -224,7 +234,7 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
             <div><span className="assistant-status-dot" /><div><strong>Consulta tus asuntos</strong><small>Respuestas basadas en tus datos verificados</small></div></div>
             <div className="assistant-chat-actions"><button className="assistant-history-toggle" type="button" onClick={() => setHistoryOpen((value) => !value)} aria-label="Ver conversaciones"><SidebarSimple size={18} /></button><button type="button" onClick={() => setOpen(false)} aria-label="Cerrar asistente"><X size={19} /></button></div>
           </header>
-          <div className="assistant-messages" aria-live="polite">
+          <div className="assistant-messages" ref={messagesRef} role="log" aria-live="polite" aria-label="Mensajes de la conversación">
             {loading && !messages.length ? <div className="assistant-loading"><span /><span /><span /></div> : !messages.length ? <div className="assistant-welcome">
               <span><Sparkle size={22} weight="duotone" /></span>
               <h2>Hola, {firstName}.</h2>
@@ -235,7 +245,6 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
               <div><p>{item.content}</p><time>{new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" }).format(new Date(item.createdAt))}</time></div>
             </article>)}
             {sending && <article className="assistant-message assistant-message-assistant"><span><Sparkle size={14} weight="fill" /></span><div className="assistant-thinking"><i /><i /><i /><small>Consultando tus datos</small></div></article>}
-            <div ref={endRef} />
           </div>
           {error && <div className="assistant-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Cerrar aviso"><X size={13} /></button></div>}
           <form className="assistant-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
