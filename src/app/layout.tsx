@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const siteUrl = process.env.APP_URL ?? "https://www.miboletin.lat";
+
 export const metadata: Metadata = {
   title: { default: "Mi Boletín Judicial", template: "%s | Mi Boletín Judicial" },
   description: "Monitoreo responsable de publicaciones judiciales para litigantes y despachos mexicanos.",
-  metadataBase: new URL(process.env.APP_URL ?? "https://miboletin.lat"),
+  metadataBase: new URL(siteUrl),
   applicationName: "Mi Boletín Judicial",
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     locale: "es_MX",
-    url: "https://miboletin.lat",
+    url: siteUrl,
     siteName: "Mi Boletín Judicial",
     title: "Mi Boletín Judicial",
     description: "Tus expedientes, resoluciones y sesiones judiciales en un solo espacio.",
