@@ -12,6 +12,10 @@ const addCaseActionSchema = z.object({
   jurisdiction: z.enum(["JALISCO", "FEDERAL"]).nullable(),
   circuit: z.string().trim().max(120).nullable(),
   case_type: z.string().trim().max(120).nullable(),
+  matter: z.string().trim().max(120).nullish(),
+  state: z.string().trim().max(120).nullish(),
+  organ_type: z.string().trim().max(80).nullish(),
+  source_hint: z.enum(["JALISCO_CJJ", "STJ_JALISCO", "FEDERAL_PJF"]).nullish(),
 });
 
 const actionPayloadSchema = z.object({ cases: z.array(addCaseActionSchema).min(1).max(20) });
@@ -30,12 +34,16 @@ const addCasesTool = {
         properties: {
           folder_name: { type: "string", description: "Nombre de la carpeta indicada por el usuario." },
           case_number: { type: "string", description: "Número de expediente con año, por ejemplo 1155/2003." },
-          court_name: { type: "string", description: "Nombre completo del órgano jurisdiccional." },
+          court_name: { type: "string", description: "Descripción del órgano tal como la expresó el usuario. No la completes ni inventes una denominación oficial." },
           jurisdiction: { type: ["string", "null"], enum: ["JALISCO", "FEDERAL", null], description: "Jurisdicción si puede identificarse con certeza." },
           circuit: { type: ["string", "null"], description: "Circuito federal sólo si fue indicado o puede identificarse con certeza; puede ser null aunque el asunto sea federal." },
           case_type: { type: ["string", "null"], description: "Tipo de asunto si el usuario lo indicó." },
+          matter: { type: ["string", "null"], description: "Materia inferida sólo si hay evidencia: Civil, Mercantil, Penal, Familiar, Laboral o Administrativa." },
+          state: { type: ["string", "null"], description: "Entidad federativa indicada o inequívocamente inferida." },
+          organ_type: { type: ["string", "null"], description: "Tipo de órgano descrito: Sala, Juzgado, Tribunal Colegiado, Tribunal de Apelación, Pleno o equivalente." },
+          source_hint: { type: ["string", "null"], enum: ["JALISCO_CJJ", "STJ_JALISCO", "FEDERAL_PJF", null], description: "Fuente probable sólo cuando pueda inferirse por el lenguaje jurídico." },
         },
-        required: ["folder_name", "case_number", "court_name", "jurisdiction", "circuit", "case_type"],
+        required: ["folder_name", "case_number", "court_name", "jurisdiction", "circuit", "case_type", "matter", "state", "organ_type", "source_hint"],
       } } },
       required: ["cases"],
     },
@@ -62,7 +70,9 @@ const instructions = [
   "Resalta en negritas expedientes, fechas clave, cantidades y resultados. No pongas todo el texto en negritas. Tras una tabla extensa, agrega una síntesis breve de lo que requiere atención.",
   "Sé conciso y sugiere abrir el expediente dentro de la aplicación sólo cuando sea útil para revisar el texto oficial.",
   "Si el usuario ordena explícitamente agregar o vigilar uno o varios expedientes y proporciona carpeta, número y órgano para cada uno, llama add_monitored_cases una sola vez con todos. No llames la función para preguntas, ejemplos hipotéticos o solicitudes ambiguas.",
-  "No inventes el circuito. Conserva literalmente el nombre completo del órgano proporcionado; el servidor lo contrastará con el catálogo oficial y resolverá su circuito.",
+  "Los usuarios pueden describir órganos en lenguaje jurídico natural: 'Novena Sala Civil', '9a Sala Civil', 'Quinto Mercantil' o abreviaturas equivalentes son válidas. Conserva en court_name la descripción del usuario; no exijas ni inventes el nombre oficial. El backend la resolverá contra el catálogo canónico usando ordinal, materia, tipo, institución, ubicación y fuente.",
+  "Si carpeta, expediente y descripción del órgano ya están presentes, ejecuta la herramienta sin pedir que repitan información ni que proporcionen la denominación oficial. Pregunta sólo si falta realmente un dato indispensable; la ambigüedad del órgano la determinará el backend con candidatos reales.",
+  "Infiere source_hint así: TOCA + SALA o STJ corresponde a STJ_JALISCO; órganos locales de Jalisco a JALISCO_CJJ; Juzgado de Distrito, Tribunal Colegiado, Pleno Regional o asuntos de amparo a FEDERAL_PJF. No inventes el circuito.",
   "Clasifica como FEDERAL a todo Juzgado de Distrito, Tribunal Colegiado, Tribunal Colegiado de Apelación, Tribunal Laboral Federal o Pleno Regional, aunque su nombre mencione un estado. Los juzgados del Poder Judicial de Jalisco son JALISCO.",
 ].join("\n");
 

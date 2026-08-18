@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
 import { FederalProvider } from "@/lib/providers/federal/provider";
 import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
+import { JudicialOrganResolver } from "@/lib/judicial/court-resolver";
 
 describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jalisco", () => {
   it("mantiene los cinco catálogos y sus campos esenciales", async () => {
@@ -40,9 +41,51 @@ describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Sala
   it("declara la protección interactiva del portal de sentencias sin evadirla", async () => {
     expect(await new StjJaliscoProvider().probeJudgmentSearchAccess()).toBe("RECAPTCHA_REQUIRED");
   }, 30_000);
+
+  it("resuelve lenguaje natural y verifica el Toca 210/2026 en la Novena Sala Civil", async () => {
+    const provider = new StjJaliscoProvider();
+    const catalog = (await provider.fetchCatalogs()).map((court) => ({ ...court, jurisdiction: "JALISCO" as const, source: "STJ_JALISCO" as const, courtType: "STJ_CHAMBER" }));
+    const resolution = new JudicialOrganResolver(catalog).resolve({
+      rawQuery: "Novena Sala Civil del Supremo Tribunal de Justicia del Estado de Jalisco",
+      caseNumber: "210/2026", caseType: "Toca", jurisdictionHint: "JALISCO", sourceHint: "STJ_JALISCO",
+    });
+    expect(resolution).toMatchObject({ status: "RESOLVED", court: { externalId: "9" } });
+    expect((await provider.searchCase("210/2026", resolution.court!.externalId)).records.length).toBeGreaterThan(0);
+  }, 30_000);
+});
+
+describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("resolución en vivo de órganos locales de Jalisco", () => {
+  it("resuelve Quinto Mercantil sin confundirlo con Décimo Quinto", async () => {
+    const provider = new JaliscoProvider();
+    const catalog = (await provider.fetchCatalogs()).map((court) => ({ ...court, jurisdiction: "JALISCO" as const, source: "JALISCO_CJJ" as const }));
+    const resolution = new JudicialOrganResolver(catalog).resolve({
+      rawQuery: "Juzgado Quinto mercantil jalisco", caseNumber: "12/2025",
+      jurisdictionHint: "JALISCO", sourceHint: "JALISCO_CJJ", matterHint: "Mercantil",
+    });
+    expect(resolution).toMatchObject({ status: "RESOLVED", court: { externalId: "M05" } });
+    expect((await provider.searchCase("12/2025", resolution.court!.externalId)).records.length).toBeGreaterThan(0);
+  }, 30_000);
 });
 
 describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de listas a sesión federales", () => {
+  it("resuelve una abreviatura natural contra el catálogo vigente del Tercer Circuito", async () => {
+    const provider = new FederalProvider();
+    const circuit = (await provider.getCircuits()).find((item) => item.externalId === "3");
+    expect(circuit).toBeDefined();
+    const catalog = (await provider.getCourts("3")).map((court) => ({
+      ...court,
+      jurisdiction: "FEDERAL" as const,
+      source: "FEDERAL_PJF" as const,
+      circuit: circuit!.externalId,
+      circuitName: circuit!.name,
+    }));
+    const resolution = new JudicialOrganResolver(catalog).resolve({
+      rawQuery: "3er Tribunal Colegiado Civil del Tercer Circuito",
+      caseNumber: "29/2026", caseType: "Queja", jurisdictionHint: "FEDERAL", sourceHint: "FEDERAL_PJF",
+    });
+    expect(resolution).toMatchObject({ status: "RESOLVED", court: { externalId: "136" } });
+  }, 30_000);
+
   it("mantiene aislada la Queja 29/2026 por órgano, número y tipo", async () => {
     const records = await new FederalProvider().fetchCase("29/2026", "136", "Queja");
     const sessions = records.filter((record) => String(record.externalId).includes("case-"));

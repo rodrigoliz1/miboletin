@@ -302,6 +302,14 @@ export async function createMonitoredCase(input: {
   folderIds?: string[];
   label?: string;
   monitorFrom: string;
+  resolutionMetadata?: {
+    rawCourtInput: string;
+    canonicalCourtId: string;
+    canonicalCourtName: string;
+    resolutionConfidence: string;
+    resolutionMethod?: string;
+    resolutionScore?: number;
+  };
 }): Promise<string> {
   const parsed = normalizeCaseNumber(input.caseNumber);
   const canonical = canonicalCaseKey({
@@ -432,7 +440,7 @@ export async function createMonitoredCase(input: {
     `;
     await tx`
       INSERT INTO audit_logs (actor_user_id, organization_id, action, entity_type, entity_id, metadata)
-      VALUES (${input.userId}, ${input.organizationId}, 'MONITORED_CASE_CREATED', 'monitored_case', ${monitored.id}, ${tx.json({ jurisdiction: input.jurisdiction, courtExternalId: input.courtExternalId, caseNumber: parsed.normalized, historicalMovementsLinked: historicalMovements.length })})
+      VALUES (${input.userId}, ${input.organizationId}, 'MONITORED_CASE_CREATED', 'monitored_case', ${monitored.id}, ${tx.json({ jurisdiction: input.jurisdiction, courtExternalId: input.courtExternalId, caseNumber: parsed.normalized, historicalMovementsLinked: historicalMovements.length, ...(input.resolutionMetadata ? { courtResolution: input.resolutionMetadata } : {}) })})
     `;
     return monitored.id;
   });

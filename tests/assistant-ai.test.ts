@@ -4,9 +4,9 @@ import { enforceGroundedSessionAnswer, parseAssistantCompletion } from "@/lib/as
 describe("assistant tool calling", () => {
   it("preserves validated add_monitored_cases calls", () => {
     const parsed = parseAssistantCompletion({ choices: [{ message: { content: null, tool_calls: [{
-      id: "call-1", type: "function", function: { name: "add_monitored_cases", arguments: JSON.stringify({ cases: [{ folder_name: "General", case_number: "93/2026", court_name: "Tercera Sala Especializada en Materia Civil", jurisdiction: "JALISCO", circuit: null, case_type: "Toca" }] }) },
+      id: "call-1", type: "function", function: { name: "add_monitored_cases", arguments: JSON.stringify({ cases: [{ folder_name: "General", case_number: "210/2026", court_name: "Novena Sala Civil del Supremo Tribunal de Justicia del Estado de Jalisco", jurisdiction: "JALISCO", circuit: null, case_type: "Toca", matter: "Civil", state: "Jalisco", organ_type: "Sala", source_hint: "STJ_JALISCO" }] }) },
     }] } }] });
-    expect(parsed.actions).toEqual([{ folder_name: "General", case_number: "93/2026", court_name: "Tercera Sala Especializada en Materia Civil", jurisdiction: "JALISCO", circuit: null, case_type: "Toca" }]);
+    expect(parsed.actions).toEqual([{ folder_name: "General", case_number: "210/2026", court_name: "Novena Sala Civil del Supremo Tribunal de Justicia del Estado de Jalisco", jurisdiction: "JALISCO", circuit: null, case_type: "Toca", matter: "Civil", state: "Jalisco", organ_type: "Sala", source_hint: "STJ_JALISCO" }]);
   });
 
   it("rejects malformed provider tool arguments", () => {
