@@ -155,7 +155,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
              COALESCE(mc.manual_defendant, parties.defendant) AS defendant,
              CASE
                WHEN jp.publication_kind = 'AGREEMENT'
-                 AND jp.agreement_date = jp.publication_date
+                 AND (visibility.same_dates OR visibility.late_detection)
                  AND NOT (jp.publication_date BETWEEN ${period.from} AND ${period.to})
                  AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
                THEN jp.publication_date + 1
@@ -163,16 +163,34 @@ export async function buildAssistantContext(organizationId: string, userId: stri
              END AS display_date,
              (
                jp.publication_kind = 'AGREEMENT'
-               AND jp.agreement_date = jp.publication_date
+               AND (visibility.same_dates OR visibility.late_detection)
                AND NOT (jp.publication_date BETWEEN ${period.from} AND ${period.to})
                AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
-             ) AS carried_forward
+             ) AS carried_forward,
+             CASE WHEN
+               jp.publication_kind = 'AGREEMENT'
+               AND (visibility.same_dates OR visibility.late_detection)
+               AND NOT (jp.publication_date BETWEEN ${period.from} AND ${period.to})
+               AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
+             THEN CASE
+               WHEN visibility.same_dates AND visibility.late_detection THEN 'BOTH'
+               WHEN visibility.same_dates THEN 'SAME_DATES'
+               ELSE 'LATE_DETECTION'
+             END ELSE NULL END AS carry_reason
       FROM case_movements cm
       JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
       JOIN judicial_cases jc ON jc.id = mc.case_id
       JOIN courts c ON c.id = jc.court_id
       JOIN judicial_authorities ja ON ja.id = jc.authority_id
       JOIN judicial_publications jp ON jp.id = cm.publication_id
+      CROSS JOIN LATERAL (
+        SELECT
+          COALESCE(jp.agreement_date = jp.publication_date, false) AS same_dates,
+          (
+            (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = jp.publication_date
+            AND (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+          ) AS late_detection
+      ) visibility
       LEFT JOIN LATERAL (
         SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
                string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
@@ -184,7 +202,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
           jp.publication_date BETWEEN ${period.from} AND ${period.to}
           OR (
             jp.publication_kind = 'AGREEMENT'
-            AND jp.agreement_date = jp.publication_date
+            AND (visibility.same_dates OR visibility.late_detection)
             AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
           )
         )
@@ -280,6 +298,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       publicationDate: row.publication_date,
       displayDate: row.display_date,
       carriedForward: Boolean(row.carried_forward),
+      carryReason: row.carry_reason,
       agreementDate: row.agreement_date,
       promotionDate: row.promotion_date,
       kind: row.publication_kind,

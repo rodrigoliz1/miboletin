@@ -118,6 +118,7 @@ export interface OrganizationMovementRecord {
   notebook: string | null;
   display_date: string;
   carried_forward: boolean;
+  carry_reason: "SAME_DATES" | "LATE_DETECTION" | "BOTH" | null;
 }
 
 export interface JudicialSearchResult {
@@ -218,8 +219,14 @@ export async function listFolders(organizationId: string): Promise<FolderRecord[
              jp.publication_date = ${today}
              OR (
                jp.publication_kind = 'AGREEMENT'
-               AND jp.agreement_date = jp.publication_date
                AND jp.publication_date + 1 = ${today}::date
+               AND (
+                 jp.agreement_date = jp.publication_date
+                 OR (
+                   (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = jp.publication_date
+                   AND (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+                 )
+               )
              )
            )::int AS new_count
     FROM case_folders f
@@ -477,8 +484,14 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
              movement_publication.publication_date = ${today}
              OR (
                movement_publication.publication_kind = 'AGREEMENT'
-               AND movement_publication.agreement_date = movement_publication.publication_date
                AND movement_publication.publication_date + 1 = ${today}::date
+               AND (
+                 movement_publication.agreement_date = movement_publication.publication_date
+                 OR (
+                   (movement_publication.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = movement_publication.publication_date
+                   AND (movement_publication.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+                 )
+               )
              )
            )::int AS new_count
     FROM monitored_cases mc
@@ -683,7 +696,7 @@ export async function listOrganizationMovements(organizationId: string, from: st
            COALESCE(mc.manual_defendant, parties.defendant) AS defendant,
            CASE
              WHEN jp.publication_kind = 'AGREEMENT'
-               AND jp.agreement_date = jp.publication_date
+               AND (visibility.same_dates OR visibility.late_detection)
                AND NOT (jp.publication_date BETWEEN ${from} AND ${to})
                AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
              THEN jp.publication_date + 1
@@ -691,16 +704,34 @@ export async function listOrganizationMovements(organizationId: string, from: st
            END AS display_date,
            (
              jp.publication_kind = 'AGREEMENT'
-             AND jp.agreement_date = jp.publication_date
+             AND (visibility.same_dates OR visibility.late_detection)
              AND NOT (jp.publication_date BETWEEN ${from} AND ${to})
              AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
-           ) AS carried_forward
+           ) AS carried_forward,
+           CASE WHEN
+             jp.publication_kind = 'AGREEMENT'
+             AND (visibility.same_dates OR visibility.late_detection)
+             AND NOT (jp.publication_date BETWEEN ${from} AND ${to})
+             AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
+           THEN CASE
+             WHEN visibility.same_dates AND visibility.late_detection THEN 'BOTH'
+             WHEN visibility.same_dates THEN 'SAME_DATES'
+             ELSE 'LATE_DETECTION'
+           END ELSE NULL END AS carry_reason
     FROM case_movements cm
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
     JOIN judicial_cases jc ON jc.id = mc.case_id
     JOIN courts c ON c.id = jc.court_id
     JOIN judicial_authorities ja ON ja.id = jc.authority_id
     JOIN judicial_publications jp ON jp.id = cm.publication_id
+    CROSS JOIN LATERAL (
+      SELECT
+        COALESCE(jp.agreement_date = jp.publication_date, false) AS same_dates,
+        (
+          (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = jp.publication_date
+          AND (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+        ) AS late_detection
+    ) visibility
     LEFT JOIN federal_session_details fsd ON fsd.publication_id = jp.id
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
@@ -719,7 +750,7 @@ export async function listOrganizationMovements(organizationId: string, from: st
         jp.publication_date BETWEEN ${from} AND ${to}
         OR (
           jp.publication_kind = 'AGREEMENT'
-          AND jp.agreement_date = jp.publication_date
+          AND (visibility.same_dates OR visibility.late_detection)
           AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
         )
       )
@@ -754,6 +785,7 @@ export async function listOrganizationMovements(organizationId: string, from: st
     notebook: row.notebook ?? null,
     display_date: isoDate(row.display_date),
     carried_forward: Boolean(row.carried_forward),
+    carry_reason: row.carry_reason ?? null,
   }));
 }
 
@@ -895,7 +927,13 @@ export async function dashboardData(organizationId: string, userId: string, from
                jp.publication_date BETWEEN ${from} AND ${to}
                OR (
                  jp.publication_kind = 'AGREEMENT'
-                 AND jp.agreement_date = jp.publication_date
+                 AND (
+                   jp.agreement_date = jp.publication_date
+                   OR (
+                     (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = jp.publication_date
+                     AND (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+                   )
+                 )
                  AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
                )
              )::int AS movements,
@@ -903,7 +941,16 @@ export async function dashboardData(organizationId: string, userId: string, from
                jp.publication_kind = 'AGREEMENT'
                AND (
                  jp.publication_date = ${today}
-                 OR (jp.agreement_date = jp.publication_date AND jp.publication_date + 1 = ${today}::date)
+                 OR (
+                   jp.publication_date + 1 = ${today}::date
+                   AND (
+                     jp.agreement_date = jp.publication_date
+                     OR (
+                       (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::date = jp.publication_date
+                       AND (jp.retrieved_at AT TIME ZONE 'America/Mexico_City')::time >= time '15:00'
+                     )
+                   )
+                 )
                )
              )::int AS agreements_today,
              count(DISTINCT n.id) FILTER (WHERE n.channel = 'IN_APP' AND n.user_id = ${userId} AND jp.publication_date = ${today})::int AS unread

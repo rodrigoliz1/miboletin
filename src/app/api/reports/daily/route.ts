@@ -25,12 +25,17 @@ export async function GET(request: Request) {
   const total = ordered.length;
   const item = (movement: (typeof ordered)[number], index: number) => {
     const notebook = verifiedNotebookLabel(movement.notebook, movement.official_text);
+    const carryExplanation = movement.carry_reason === "LATE_DETECTION"
+      ? "Revisión adicional del día: se mantiene visible porque el sistema la detectó después de las 15:00, hora de Ciudad de México."
+      : movement.carry_reason === "BOTH"
+        ? "Revisión adicional del día: se mantiene visible por coincidir la fecha del acuerdo con la publicación y haber sido detectada después de las 15:00, hora de Ciudad de México."
+        : "Revisión adicional del día: se mantiene visible por coincidir la fecha del acuerdo y la publicación oficial.";
     return ({
     number: total - index,
     heading: `${movement.case_number} - ${movement.court_name}`,
     meta: [
       `${movement.case_type} | Fecha de publicación: ${dateLabel(movement.publication_date)} | Fecha del acuerdo: ${dateLabel(movement.agreement_date)}`,
-      ...(movement.carried_forward ? [`Revisión adicional del día: se mantiene visible por coincidir la fecha del acuerdo y la publicación oficial.`] : []),
+      ...(movement.carried_forward ? [carryExplanation] : []),
       `Hora de consulta del registro: ${formatGuadalajaraTime(movement.retrieved_at)} hrs (Guadalajara)${notebook ? ` | ${notebook}` : ""}`,
     ],
     parties: [movement.plaintiff, movement.defendant].filter(Boolean).join(" / ") || undefined,

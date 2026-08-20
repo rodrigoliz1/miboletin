@@ -11,6 +11,12 @@ import { selectCurrentSessionMovements } from "@/lib/product/judicial-display";
 
 export const dynamic = "force-dynamic";
 
+function carriedForwardNote(movement: OrganizationMovementRecord): string {
+  if (movement.carry_reason === "LATE_DETECTION") return `Publicación oficial del ${movement.publication_date}; se conserva visible hoy porque fue detectada después de las 15:00, hora de Ciudad de México.`;
+  if (movement.carry_reason === "BOTH") return `Publicación oficial del ${movement.publication_date}; se conserva visible hoy porque la fecha del acuerdo coincide con la publicación y fue detectada después de las 15:00, hora de Ciudad de México.`;
+  return `Publicación oficial del ${movement.publication_date}; se conserva visible hoy porque la fecha del acuerdo coincide con la de publicación.`;
+}
+
 function Movement({ movement, session = false }: { movement: OrganizationMovementRecord; session?: boolean }) {
   const displayDate = movement.display_date || movement.publication_date;
   return <article className={`movement${session ? " session-movement" : ""}`}>
@@ -22,7 +28,7 @@ function Movement({ movement, session = false }: { movement: OrganizationMovemen
       {session && movement.judgment && <p><strong>Sentencia:</strong> {movement.judgment}</p>}
       <p>{movement.official_text}</p>
       {(movement.plaintiff || movement.defendant) && <p className="movement-parties"><strong>Partes:</strong> {[movement.plaintiff, movement.defendant].filter(Boolean).join(" / ")}</p>}
-      {movement.carried_forward && <small className="carried-forward-note">Publicación oficial del {movement.publication_date}; se conserva visible hoy porque la fecha del acuerdo coincide con la de publicación.</small>}
+      {movement.carried_forward && <small className="carried-forward-note">{carriedForwardNote(movement)}</small>}
       <small>{movement.court_name} · {movement.folder_name ?? "General"}</small>
     </div>
     <CaretRight size={16} className="muted" />

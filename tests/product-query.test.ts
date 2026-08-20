@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateInMexicoCity, isIsoDate, monthStartInMexicoCity, normalizeDateRange, optionalUuid, resolutionIsVisibleOn, resolutionVisibilityDates } from "@/lib/product/query";
+import { dateInMexicoCity, isIsoDate, monthStartInMexicoCity, normalizeDateRange, optionalUuid, resolutionIsVisibleOn, resolutionVisibilityDates, wasDetectedLateOnPublicationDate } from "@/lib/product/query";
 
 describe("product query normalization", () => {
   it("turns empty and malformed UUID filters into null", () => {
@@ -26,5 +26,13 @@ describe("product query normalization", () => {
     expect(resolutionIsVisibleOn("2026-08-18", "2026-08-18", "2026-08-19")).toBe(true);
     expect(resolutionIsVisibleOn("2026-08-18", "2026-08-17", "2026-08-19")).toBe(false);
     expect(resolutionIsVisibleOn("fecha-invalida", "fecha-invalida", "2026-08-19")).toBe(false);
+  });
+
+  it("keeps an agreement detected at or after 15:00 Mexico City visible the following day", () => {
+    expect(wasDetectedLateOnPublicationDate("2026-08-18", "2026-08-18T20:59:59.000Z")).toBe(false);
+    expect(wasDetectedLateOnPublicationDate("2026-08-18", "2026-08-18T21:00:00.000Z")).toBe(true);
+    expect(wasDetectedLateOnPublicationDate("2026-08-18", "2026-08-19T21:00:00.000Z")).toBe(false);
+    expect(resolutionVisibilityDates("2026-08-18", "2026-08-17", "2026-08-18T21:30:00.000Z")).toEqual(["2026-08-18", "2026-08-19"]);
+    expect(resolutionIsVisibleOn("2026-08-18", "2026-08-17", "2026-08-19", "2026-08-18T21:30:00.000Z")).toBe(true);
   });
 });

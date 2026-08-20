@@ -47,15 +47,32 @@ export function shiftIsoDate(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function resolutionVisibilityDates(publicationDate: string, agreementDate?: string | null): string[] {
+export function wasDetectedLateOnPublicationDate(publicationDate: string, detectedAt?: string | null): boolean {
+  if (!isIsoDate(publicationDate) || !detectedAt) return false;
+  const detected = new Date(detectedAt);
+  if (Number.isNaN(detected.valueOf())) return false;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(detected).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  const localDate = `${parts.year}-${parts.month}-${parts.day}`;
+  return localDate === publicationDate && Number(parts.hour) >= 15;
+}
+
+export function resolutionVisibilityDates(publicationDate: string, agreementDate?: string | null, detectedAt?: string | null): string[] {
   if (!isIsoDate(publicationDate)) return [];
-  return agreementDate === publicationDate
+  return agreementDate === publicationDate || wasDetectedLateOnPublicationDate(publicationDate, detectedAt)
     ? [publicationDate, shiftIsoDate(publicationDate, 1)]
     : [publicationDate];
 }
 
-export function resolutionIsVisibleOn(publicationDate: string, agreementDate: string | null | undefined, bulletinDate: string): boolean {
-  return isIsoDate(bulletinDate) && resolutionVisibilityDates(publicationDate, agreementDate).includes(bulletinDate);
+export function resolutionIsVisibleOn(publicationDate: string, agreementDate: string | null | undefined, bulletinDate: string, detectedAt?: string | null): boolean {
+  return isIsoDate(bulletinDate) && resolutionVisibilityDates(publicationDate, agreementDate, detectedAt).includes(bulletinDate);
 }
 
 export function normalizeDateRange(
