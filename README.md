@@ -117,6 +117,8 @@ Mientras el usuario mantiene abierto el dashboard, la lista o una ficha de exped
 
 Cuando la fecha oficial del acuerdo coincide con la fecha de publicación, la resolución permanece en el boletín del día oficial y vuelve a mostrarse al día siguiente como **Revisión adicional**. Lo mismo ocurre cuando el sistema detecta por primera vez un auto a partir de las 15:00, hora de Ciudad de México, siempre que esa detección suceda en su propia fecha oficial de publicación. Ambas reglas son independientes y la fecha oficial nunca se altera. En expedientes federales cuya fuente no publique partes, el usuario puede capturarlas de forma privada desde la ficha; esos nombres quedan aislados dentro de su asunto vigilado.
 
+En el boletín local de Jalisco la ficha presenta **Fecha de acuerdo** y **Fecha de publicación**. Cuando la API no entrega `FCH_BOLETIN`, la publicación se normaliza al siguiente día hábil posterior al acuerdo; sábado y domingo se trasladan al lunes. La fecha de promoción se conserva como dato de origen, pero no sustituye ni se muestra como fecha de publicación.
+
 ## Asistente
 
 El botón inferior derecho abre conversaciones privadas del usuario. Las respuestas se generan con el contexto recuperado de Neon en ese momento: asuntos activos, acuerdos, sesiones y alertas del espacio autorizado. El modelo no recibe contraseñas, cookies, UUID internos ni la cadena de conexión. Los extractos se tratan como datos no confiables y la respuesta recuerda corroborar la fuente oficial.

@@ -73,10 +73,19 @@ const catalogSources: Array<{
 let catalogCache: { expiresAt: number; value: JaliscoCourtCatalogItem[] } | null = null;
 let catalogRequest: Promise<JaliscoCourtCatalogItem[]> | null = null;
 
-function previousDate(date: string): string {
+function shiftBusinessDate(date: string, direction: -1 | 1): string {
   const parsed = new Date(`${date}T12:00:00Z`);
-  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  do parsed.setUTCDate(parsed.getUTCDate() + direction);
+  while (parsed.getUTCDay() === 0 || parsed.getUTCDay() === 6);
   return parsed.toISOString().slice(0, 10);
+}
+
+export function previousJaliscoBusinessDate(date: string): string {
+  return shiftBusinessDate(date, -1);
+}
+
+export function nextJaliscoBusinessDate(date: string): string {
+  return shiftBusinessDate(date, 1);
 }
 
 function dateOnly(value: string | null | undefined): string | undefined {
@@ -115,7 +124,10 @@ function recordToPublication(
 ): RawPublication {
   const agreementDate = dateOnly(record.FCH_ACU ?? record.FCH_ACUERDO);
   const promotionDate = dateOnly(record.FCH_PRO ?? record.FECHA_PROMOCION);
-  const publicationDate = dateOnly(record.FCH_BOLETIN) ?? agreementDate ?? promotionDate ?? new Date().toISOString().slice(0, 10);
+  const publicationDate = dateOnly(record.FCH_BOLETIN)
+    ?? (agreementDate ? nextJaliscoBusinessDate(agreementDate) : undefined)
+    ?? promotionDate
+    ?? new Date().toISOString().slice(0, 10);
   return {
     externalId: `${court.family}:${court.externalId}:${record.EXP}:${agreementDate ?? publicationDate}:${index}`,
     courtExternalId: court.externalId,
@@ -138,8 +150,8 @@ function recordToPublication(
 export class JaliscoProvider implements JudicialSourceProvider {
   readonly id = "jalisco-cjj";
   readonly name = "Consejo de la Judicatura del Estado de Jalisco";
-  readonly providerVersion = "2.0.0";
-  readonly parserVersion = "jalisco-multi-family-json-2";
+  readonly providerVersion = "2.0.1";
+  readonly parserVersion = "jalisco-multi-family-json-3";
   private readonly base = process.env.JALISCO_API_BASE ?? "https://api.cjj.gob.mx";
   private readonly officialPage = "https://cjj.gob.mx/bulletin";
 
@@ -254,7 +266,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
     if (!query.courtExternalId) throw new ProviderError("INVALID_RESPONSE", "Jalisco requiere identificador de juzgado", false);
     const court = await this.court(query.courtExternalId);
     const endpoint = this.endpoint(court, "date");
-    const records = await this.records(endpoint, { judged: court.externalId, date: previousDate(query.date) });
+    const records = await this.records(endpoint, { judged: court.externalId, date: previousJaliscoBusinessDate(query.date) });
     const requested = query.caseNumber ? normalizeCaseNumber(query.caseNumber).normalized : null;
     return records
       .filter((record) => !requested || normalizeCaseNumber(record.EXP).normalized === requested)

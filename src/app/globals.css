@@ -1034,7 +1034,7 @@ button:active, .button:active { transform: translateY(1px); }
   .history-table td { padding: 5px 0; border: 0; }
   .history-table td::before { display: block; margin-bottom: 5px; color: var(--stone); font-size: 8px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
   .history-table td:nth-child(1)::before { content: "Fecha de acuerdo"; }
-  .history-table td:nth-child(2)::before { content: "Fecha de promoción"; }
+  .history-table td:nth-child(2)::before { content: "Fecha de publicación"; }
   .history-table td:nth-child(3)::before { content: "Extracto de acuerdo"; margin-top: 8px; }
   .product-error { grid-template-columns: 1fr; }
   .assistant-launcher { min-width: 46px; width: 46px; height: 46px; padding: 0; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JaliscoProvider } from "@/lib/providers/jalisco/provider";
+import { JaliscoProvider, nextJaliscoBusinessDate } from "@/lib/providers/jalisco/provider";
 import { FederalProvider } from "@/lib/providers/federal/provider";
 import { StjJaliscoProvider } from "@/lib/providers/stj/provider";
 import { JudicialOrganResolver } from "@/lib/judicial/court-resolver";
@@ -25,6 +25,9 @@ describe.skipIf(process.env.LIVE_SOURCE_TESTS !== "1")("contrato en vivo de Jali
     expect(result.records.length).toBeGreaterThan(0);
     expect(result.records[0].courtExternalId).toBe(court);
     expect(result.records[0].officialText.length).toBeGreaterThan(5);
+    const first = result.records[0];
+    const raw = first.rawPayload as Record<string, unknown>;
+    if (first.agreementDate && !raw.FCH_BOLETIN) expect(first.publicationDate).toBe(nextJaliscoBusinessDate(first.agreementDate));
   }, 30_000);
 });
 

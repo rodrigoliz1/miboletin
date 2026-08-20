@@ -48,6 +48,12 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   expect(Date.now() - saveStartedAt, "el alta debe terminar sin esperar el rastreo histórico").toBeLessThan(15_000);
   await expect(page.getByRole("heading", { name: /1511\/2025/ })).toBeVisible();
   await expect(page.getByText("Resolución publicada").first()).toBeVisible({ timeout: 60_000 });
+  const firstLocalResolution = page.locator(".timeline-item").first();
+  await expect(firstLocalResolution.getByText("Fecha de acuerdo", { exact: true })).toBeVisible();
+  await expect(firstLocalResolution.getByText("Fecha de publicación", { exact: true })).toBeVisible();
+  await expect(firstLocalResolution).toContainText("17 de agosto de 2026");
+  await expect(firstLocalResolution).toContainText("18 de agosto de 2026");
+  await expect(page.getByText("Fecha de promoción", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/^\d+ publicaciones$/)).toBeVisible();
   await expect(page.getByText("General · Amparos estratégicos")).toBeVisible();
   await page.getByRole("button", { name: "Gestionar carpetas" }).click();
