@@ -15,12 +15,13 @@
 2. Configurar las variables de `.env.example` en Vercel y los secretos de vigilancia en GitHub.
 3. Ejecutar `pnpm db:migrate` desde una tarea de release con acceso exclusivo.
 4. Desplegar Next.js y confirmar `/status`.
-5. Activar el workflow **Vigilancia judicial**; ya está programado a las 08:00, 09:00, 11:00, 14:00, 17:00 y 20:00, hora de Guadalajara.
-6. Ejecutarlo manualmente una vez desde Actions y revisar que termine sin errores.
-7. Ejecutar un backfill federal acotado con `--dry-run`, revisar el snapshot y después persistirlo.
-8. Registrar una cuenta de staging, un expediente federal controlado y comprobar DB -> matching -> alerta -> UI antes de habilitar notificaciones de producción.
+5. Confirmar en **Vercel → Settings → Cron Jobs** que `/api/cron/refresh` quedó activo cada diez minutos. Esta frecuencia requiere un plan de Vercel distinto de Hobby; Hobby sólo admite ejecución diaria. Configurar `CRON_SECRET` antes del despliegue.
+6. Activar el workflow **Vigilancia judicial** como barrido completo de respaldo; ya está programado a las 08:00, 09:00, 11:00, 14:00, 17:00 y 20:00, hora de Guadalajara.
+7. Ejecutarlo manualmente una vez desde Actions y revisar que termine sin errores.
+8. Ejecutar un backfill federal acotado con `--dry-run`, revisar el snapshot y después persistirlo.
+9. Registrar una cuenta de staging, un expediente federal controlado y comprobar DB -> matching -> alerta -> UI antes de habilitar notificaciones de producción.
 
-Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` y `BLOB_READ_WRITE_TOKEN`. Para el Asistente: `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL_FAST`, `AI_MODEL_PRO` y `AI_MODEL_PREMIUM`. Recomendadas: `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
+Variables obligatorias de producción: `DATABASE_URL`, `AUTH_SECRET`, `EMAIL_OTP_SECRET`, `PASSWORD_RESET_SECRET`, `CRON_SECRET`, `APP_URL`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` y `BLOB_READ_WRITE_TOKEN`. Para el Asistente: `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL_FAST`, `AI_MODEL_PRO` y `AI_MODEL_PREMIUM`. Recomendadas: `CRON_REFRESH_BATCH_SIZE=12`, `DB_POOL_SIZE=2`, `SOURCE_USER_AGENT`, `FEDERAL_SESSION_BASE`, `LOG_LEVEL`.
 
 No ejecutar ingestión masiva desde funciones serverless con timeout. Los jobs deben ser reentrantes e idempotentes.
 
@@ -67,6 +68,7 @@ Después, en Vercel:
 10. En Brevo autentica el dominio, verifica el remitente y crea una clave transaccional con el menor alcance necesario.
 11. Activa también el workflow **Continuidad de suscripción** y comprueba que una ejecución manual no envíe correo a una suscripción recurrente activa.
 12. Comprueba registro → OTP → dashboard bloqueado → Checkout → retorno automático al dashboard habilitado, correo de confirmación, portal de facturación, renovación, bloqueo por vencimiento, alta/borrado de expediente, carpetas múltiples, filtros, conversaciones y una pregunta de prueba.
+13. Invoca una vez `GET /api/cron/refresh` con `Authorization: Bearer $CRON_SECRET`; debe responder `acquired: true`. Una segunda ejecución superpuesta debe responder sin procesar otro lote.
 
 Para desplegar también desde la terminal:
 

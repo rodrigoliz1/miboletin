@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { providers, type ProviderId } from "@/lib/providers";
 import { runIngestion } from "@/lib/ingestion/pipeline";
 import { getSession } from "@/lib/security/session";
+import { isCronRequestAuthorized } from "@/lib/security/cron";
 
 export async function POST(request: Request, context: { params: Promise<{ provider: string }> }) {
   const { provider } = await context.params;
   if (!(provider in providers)) return NextResponse.json({ error: "Proveedor desconocido" }, { status: 404 });
-  const authorization = request.headers.get("authorization");
-  const cronAuthorized = Boolean(process.env.CRON_SECRET) && authorization === `Bearer ${process.env.CRON_SECRET}`;
+  const cronAuthorized = isCronRequestAuthorized(request);
   const session = await getSession();
   const adminAuthorized = session?.role === "ADMIN" || session?.role === "OWNER";
   if (!cronAuthorized && !adminAuthorized) return NextResponse.json({ error: "No autorizado" }, { status: 401 });

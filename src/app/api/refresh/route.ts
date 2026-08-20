@@ -6,7 +6,7 @@ import { tryMarkMonitoredCaseChecking } from "@/lib/product/repository";
 import { hasActiveProductAccess } from "@/lib/billing/access";
 import { isSameOrigin } from "@/lib/security/request";
 
-const jsonSchema = z.object({ caseId: z.string().uuid().optional(), force: z.boolean().optional() });
+const jsonSchema = z.object({ caseId: z.string().uuid().optional(), force: z.boolean().optional(), automatic: z.boolean().optional() });
 export const maxDuration = 300;
 
 function reportBackgroundError(error: unknown) {
@@ -28,10 +28,10 @@ export async function POST(request: Request) {
         if (queued) after(() => refreshMonitoredCase(session.organizationId, parsed.data.caseId!, true).catch(reportBackgroundError));
         return NextResponse.json({ ok: true, queued, alreadyRunning: !queued }, { status: 202 });
       }
-      after(() => refreshOrganizationCases(session.organizationId).catch(reportBackgroundError));
+      after(() => refreshOrganizationCases(session.organizationId, parsed.data.automatic ? { force: false, limit: 6 } : { force: true }).catch(reportBackgroundError));
       return NextResponse.json({ ok: true, queued: true }, { status: 202 });
     }
-    after(() => refreshOrganizationCases(session.organizationId).catch(reportBackgroundError));
+    after(() => refreshOrganizationCases(session.organizationId, { force: true }).catch(reportBackgroundError));
     return NextResponse.redirect(new URL("/dashboard?refreshed=1", request.url), 303);
   } catch (error) {
     if (wantsJson) return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "No fue posible actualizar" }, { status: 502 });

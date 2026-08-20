@@ -753,6 +753,7 @@ button:active, .button:active { transform: translateY(1px); }
 .password-reset-form .password-control button { border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--stone); cursor: pointer; }
 .password-reset-form .field > small { display: block; margin-top: 5px; color: var(--stone); font-size: 8px; }
 .movement-main .movement-parties { color: var(--ink); font-size: 10px; }
+.movement-main .carried-forward-note { display: block; margin-bottom: 5px; color: var(--burgundy); }
 .metric-emphasis { background: rgba(107,39,55,.045); }
 .jurisdiction-publications > section + section { margin-top: 3px; }
 .publication-divider { min-height: 36px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-block: 1px solid #b9afa2; background: var(--paper-muted); color: var(--burgundy); }
@@ -809,6 +810,13 @@ button:active, .button:active { transform: translateY(1px); }
 .search-result-add .searchable-select-trigger { min-height: 38px; padding-block: 5px; }
 .notebook-label { margin-top: 10px; display: inline-flex; padding: 5px 8px; border-left: 2px solid var(--burgundy); background: #f3e8ea; color: var(--burgundy); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .case-party-grid { margin: 0; border-top: 0; }
+.case-parties-panel { margin-top: 18px; overflow: hidden; }
+.case-parties-panel .panel-header { align-items: center; }
+.case-parties-panel .panel-header div small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.case-parties-form { padding: 20px 22px; border-top: 1px solid var(--line); background: var(--paper); }
+.case-parties-form textarea { min-height: 78px; resize: vertical; }
+.case-parties-form > .muted { margin-top: 10px; font-size: 9px; }
+.filter-live-count { align-self: center; color: var(--muted); font-size: 9px; white-space: nowrap; }
 .session-summary { margin-top: 22px; border: 1px solid #cdbdc1; background: #f8f0f1; }
 .session-summary > header { min-height: 44px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #d8c4c8; }
 .session-summary > header span { color: var(--burgundy); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }

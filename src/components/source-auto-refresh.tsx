@@ -31,34 +31,34 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
     if (started.current) return;
     started.current = true;
     const controller = new AbortController();
+    const storageKey = `mi-boletin:last-refresh:${caseId ?? "organization"}`;
+    let liveTimer: number | undefined;
+    let cycleRunning = false;
     const stopForRemoval = (event: Event) => {
       const removing = event as CustomEvent<{ caseId?: string }>;
       if (!caseId || removing.detail?.caseId === caseId) controller.abort();
     };
     window.addEventListener("mi-boletin:case-removing", stopForRemoval);
 
-    const run = async () => {
-      const storageKey = `mi-boletin:last-refresh:${caseId ?? "organization"}`;
-      const lastRequested = Number(window.sessionStorage.getItem(storageKey) ?? 0);
-      const shouldRequest = force || !lastRequested || Date.now() - lastRequested > 60_000;
+    const queueRefresh = async (forceRequest: boolean) => {
+      const lastRequested = Number(window.localStorage.getItem(storageKey) ?? 0);
+      const shouldRequest = forceRequest || !lastRequested || Date.now() - lastRequested >= 5 * 60_000;
 
       if (shouldRequest) {
-        window.sessionStorage.setItem(storageKey, String(Date.now()));
         const response = await resilientFetch("/api/refresh", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ caseId, force }),
+          body: JSON.stringify({ caseId, force: forceRequest, automatic: !caseId }),
           signal: controller.signal,
         }, 2);
         const payload = await response.json() as { ok?: boolean; error?: string };
         if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible actualizar las fuentes");
+        window.localStorage.setItem(storageKey, String(Date.now()));
       }
+    };
 
-      if (!caseId) {
-        setPhase("done");
-        return;
-      }
-
+    const pollCase = async () => {
+      if (!caseId) return;
       setPhase("checking");
       for (let attempt = 0; attempt < 150; attempt += 1) {
         await wait(attempt === 0 ? 250 : 2_000, controller.signal);
@@ -83,12 +83,41 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
       setPhase("continuing");
     };
 
-    void run().catch((reason: unknown) => {
+    const cycle = async (forceRequest = false) => {
+      if (cycleRunning || controller.signal.aborted) return;
+      cycleRunning = true;
+      try {
+        await queueRefresh(forceRequest);
+        await pollCase();
+        if (!caseId) {
+          setPhase("done");
+          router.refresh();
+        }
+        setError(null);
+      } finally {
+        cycleRunning = false;
+      }
+    };
+
+    const handleError = (reason: unknown) => {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setPhase("error");
       setError(reason instanceof Error ? reason.message : "No fue posible actualizar las fuentes");
+    };
+
+    void cycle(force).catch(handleError).finally(() => {
+      if (controller.signal.aborted) return;
+      liveTimer = window.setInterval(() => {
+        if (document.visibilityState !== "visible" || !navigator.onLine) return;
+        router.refresh();
+        void cycle(false).catch(handleError);
+      }, 60_000);
     });
-    return () => { controller.abort(); window.removeEventListener("mi-boletin:case-removing", stopForRemoval); };
+    return () => {
+      controller.abort();
+      if (liveTimer) window.clearInterval(liveTimer);
+      window.removeEventListener("mi-boletin:case-removing", stopForRemoval);
+    };
   }, [caseId, force, router]);
 
   if (phase === "done") return null;

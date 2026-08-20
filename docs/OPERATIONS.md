@@ -29,6 +29,15 @@ pnpm monitor:daily --dry-run
 pnpm monitor:daily
 ```
 
+La actualización incremental de Vercel se ejecuta cada diez minutos y procesa primero los asuntos con revisión más antigua. Para probarla sin exponer el secreto:
+
+```bash
+curl http://localhost:3000/api/cron/refresh \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+`acquired: false` significa que otro ciclo conserva el bloqueo; no es un error. Si un ciclo se interrumpe, el arrendamiento expira en nueve minutos. El trabajo es idempotente y los asuntos en estado `CHECKING` no se toman de nuevo durante la ventana de seguridad.
+
 El backfill federal consulta primero el calendario y sólo descarga fechas publicadas. Sin `--court` procesa secuencialmente el circuito. Cada fecha/modo registra un `jobId`; un fallo se informa sin eliminar éxitos anteriores.
 
 ## Comprobar una publicación

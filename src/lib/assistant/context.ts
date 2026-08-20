@@ -127,12 +127,19 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       SELECT mc.id, jc.case_number_normalized, jc.case_type, jc.status, count(*) OVER()::int AS total_count,
              c.name AS court_name, c.court_type, ja.jurisdiction,
              cir.name AS circuit_name, folders.folder_name,
-             mc.source_status, mc.last_successful_check_at
+             mc.source_status, mc.last_successful_check_at,
+             COALESCE(mc.manual_plaintiff, parties.plaintiff) AS plaintiff,
+             COALESCE(mc.manual_defendant, parties.defendant) AS defendant
       FROM monitored_cases mc
       JOIN judicial_cases jc ON jc.id = mc.case_id
       JOIN courts c ON c.id = jc.court_id
       JOIN judicial_authorities ja ON ja.id = jc.authority_id
       LEFT JOIN judicial_circuits cir ON cir.id = c.circuit_id
+      LEFT JOIN LATERAL (
+        SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
+               string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
+        FROM case_parties cp WHERE cp.case_id = jc.id
+      ) parties ON true
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
@@ -143,16 +150,44 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       SELECT jc.case_number_normalized, jc.case_type, c.name AS court_name,
              ja.jurisdiction, folders.folder_name, jp.publication_date,
              jp.agreement_date, jp.promotion_date, jp.publication_kind,
-             jp.official_text, jp.source_url
+             jp.official_text, jp.source_url,
+             COALESCE(mc.manual_plaintiff, parties.plaintiff) AS plaintiff,
+             COALESCE(mc.manual_defendant, parties.defendant) AS defendant,
+             CASE
+               WHEN jp.publication_kind = 'AGREEMENT'
+                 AND jp.agreement_date = jp.publication_date
+                 AND NOT (jp.publication_date BETWEEN ${period.from} AND ${period.to})
+                 AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
+               THEN jp.publication_date + 1
+               ELSE jp.publication_date
+             END AS display_date,
+             (
+               jp.publication_kind = 'AGREEMENT'
+               AND jp.agreement_date = jp.publication_date
+               AND NOT (jp.publication_date BETWEEN ${period.from} AND ${period.to})
+               AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
+             ) AS carried_forward
       FROM case_movements cm
       JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
       JOIN judicial_cases jc ON jc.id = mc.case_id
       JOIN courts c ON c.id = jc.court_id
       JOIN judicial_authorities ja ON ja.id = jc.authority_id
       JOIN judicial_publications jp ON jp.id = cm.publication_id
+      LEFT JOIN LATERAL (
+        SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
+               string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
+        FROM case_parties cp WHERE cp.case_id = jc.id
+      ) parties ON true
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
-        AND jp.publication_date BETWEEN ${period.from} AND ${period.to}
+        AND (
+          jp.publication_date BETWEEN ${period.from} AND ${period.to}
+          OR (
+            jp.publication_kind = 'AGREEMENT'
+            AND jp.agreement_date = jp.publication_date
+            AND jp.publication_date + 1 BETWEEN ${period.from} AND ${period.to}
+          )
+        )
         AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
         AND (${caseNumber}::text IS NULL OR jc.case_number_normalized = ${caseNumber})
       ORDER BY jp.publication_date DESC, jp.retrieved_at DESC
@@ -233,6 +268,8 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       folder: row.folder_name ?? "General",
       sourceStatus: row.source_status,
       lastVerifiedAt: row.last_successful_check_at,
+      plaintiff: row.plaintiff,
+      defendant: row.defendant,
     })),
     movements: movements.map((row) => ({
       caseNumber: row.case_number_normalized,
@@ -241,11 +278,15 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       jurisdiction: row.jurisdiction,
       folder: row.folder_name ?? "General",
       publicationDate: row.publication_date,
+      displayDate: row.display_date,
+      carriedForward: Boolean(row.carried_forward),
       agreementDate: row.agreement_date,
       promotionDate: row.promotion_date,
       kind: row.publication_kind,
       extract: clipped(row.official_text),
       officialSource: row.source_url,
+      plaintiff: row.plaintiff,
+      defendant: row.defendant,
     })),
     sessionQuery: requestType === "session_lookup" ? {
       meaning: "Asuntos monitoreados listados para sesión",

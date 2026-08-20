@@ -111,7 +111,11 @@ curl -X POST https://tu-dominio.example/api/ingest/federal \
   -d '{"date":"2026-08-07","circuitId":"3","courtExternalId":"119","sourceMode":"LISTED"}'
 ```
 
-Al entrar al dashboard o a la ficha de un expediente el navegador solicita una actualización POST y refresca la vista, con una ventana de enfriamiento de 60 segundos. En producción se programa además `monitor:daily`; no se depende sólo de visitas de usuarios.
+En producción, `vercel.json` invoca cada diez minutos `/api/cron/refresh`. La ruta exige `CRON_SECRET`, adquiere un bloqueo persistente en PostgreSQL, sólo procesa organizaciones con suscripción vigente y reparte un lote acotado por antigüedad para no superponer ejecuciones ni saturar las fuentes. `CRON_REFRESH_BATCH_SIZE` permite ajustar el lote entre 1 y 30; el valor recomendado inicial es 12. El barrido completo de GitHub Actions se conserva como respaldo operativo.
+
+Mientras el usuario mantiene abierto el dashboard, la lista o una ficha de expediente, la interfaz vuelve a leer los datos cada minuto y solicita una revisión incremental cada cinco minutos. Esto es actualización casi en tiempo real: las fuentes judiciales son de consulta y no ofrecen webhooks, por lo que no es técnicamente posible prometer entrega instantánea. El botón **Actualizar ahora** de cada expediente continúa disponible y fuerza una comprobación manual sin esperar al siguiente ciclo.
+
+Cuando la fecha oficial del acuerdo coincide con la fecha de publicación, la resolución permanece en el boletín del día oficial y vuelve a mostrarse al día siguiente como **Revisión adicional**. La fecha oficial no se altera. En expedientes federales cuya fuente no publique partes, el usuario puede capturarlas de forma privada desde la ficha; esos nombres quedan aislados dentro de su asunto vigilado.
 
 ## Asistente
 

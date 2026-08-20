@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const date = isIsoDate(query.get("date")) ? query.get("date")! : dateInMexicoCity();
   const folder = optionalUuid(query.get("folder"));
   const movements = (await listOrganizationMovements(session.organizationId, date, date, folder ?? undefined)).filter((item) => item.publication_kind === "AGREEMENT");
-  const ordered = [...movements].sort((a, b) => b.publication_date.localeCompare(a.publication_date) || b.detected_at.localeCompare(a.detected_at));
+  const ordered = [...movements].sort((a, b) => b.display_date.localeCompare(a.display_date) || b.publication_date.localeCompare(a.publication_date) || b.detected_at.localeCompare(a.detected_at));
   const total = ordered.length;
   const item = (movement: (typeof ordered)[number], index: number) => {
     const notebook = verifiedNotebookLabel(movement.notebook, movement.official_text);
@@ -30,6 +30,7 @@ export async function GET(request: Request) {
     heading: `${movement.case_number} - ${movement.court_name}`,
     meta: [
       `${movement.case_type} | Fecha de publicación: ${dateLabel(movement.publication_date)} | Fecha del acuerdo: ${dateLabel(movement.agreement_date)}`,
+      ...(movement.carried_forward ? [`Revisión adicional del día: se mantiene visible por coincidir la fecha del acuerdo y la publicación oficial.`] : []),
       `Hora de consulta del registro: ${formatGuadalajaraTime(movement.retrieved_at)} hrs (Guadalajara)${notebook ? ` | ${notebook}` : ""}`,
     ],
     parties: [movement.plaintiff, movement.defendant].filter(Boolean).join(" / ") || undefined,

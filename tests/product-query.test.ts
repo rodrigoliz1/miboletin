@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateInMexicoCity, isIsoDate, monthStartInMexicoCity, normalizeDateRange, optionalUuid } from "@/lib/product/query";
+import { dateInMexicoCity, isIsoDate, monthStartInMexicoCity, normalizeDateRange, optionalUuid, resolutionIsVisibleOn, resolutionVisibilityDates } from "@/lib/product/query";
 
 describe("product query normalization", () => {
   it("turns empty and malformed UUID filters into null", () => {
@@ -19,5 +19,12 @@ describe("product query normalization", () => {
     expect(normalizeDateRange({ from: "2026-08-10", to: "2026-08-01" }, now)).toEqual({ from: "2026-08-01", to: "2026-08-10", corrected: true });
     expect(dateInMexicoCity(now)).toBe("2026-08-15");
     expect(monthStartInMexicoCity(now)).toBe("2026-08-01");
+  });
+
+  it("keeps same-day agreements visible on their publication day and the following day", () => {
+    expect(resolutionVisibilityDates("2026-08-18", "2026-08-18")).toEqual(["2026-08-18", "2026-08-19"]);
+    expect(resolutionIsVisibleOn("2026-08-18", "2026-08-18", "2026-08-19")).toBe(true);
+    expect(resolutionIsVisibleOn("2026-08-18", "2026-08-17", "2026-08-19")).toBe(false);
+    expect(resolutionIsVisibleOn("fecha-invalida", "fecha-invalida", "2026-08-19")).toBe(false);
   });
 });

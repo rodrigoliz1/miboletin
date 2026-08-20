@@ -52,6 +52,9 @@ export interface MonitoredCaseRecord {
   newCount: number;
   plaintiff?: string;
   defendant?: string;
+  manualPlaintiff?: string;
+  manualDefendant?: string;
+  officialPartiesAvailable: boolean;
 }
 
 export interface MovementRecord {
@@ -113,6 +116,8 @@ export interface OrganizationMovementRecord {
   defendant: string | null;
   retrieved_at: string;
   notebook: string | null;
+  display_date: string;
+  carried_forward: boolean;
 }
 
 export interface JudicialSearchResult {
@@ -209,7 +214,14 @@ export async function listFolders(organizationId: string): Promise<FolderRecord[
   const rows = await db()`
     SELECT f.id, f.name, f.description,
            count(DISTINCT mc.id)::int AS case_count,
-           count(DISTINCT cm.id) FILTER (WHERE jp.publication_date = ${today})::int AS new_count
+           count(DISTINCT cm.id) FILTER (WHERE
+             jp.publication_date = ${today}
+             OR (
+               jp.publication_kind = 'AGREEMENT'
+               AND jp.agreement_date = jp.publication_date
+               AND jp.publication_date + 1 = ${today}::date
+             )
+           )::int AS new_count
     FROM case_folders f
     LEFT JOIN monitored_case_folders mcf ON mcf.folder_id = f.id
     LEFT JOIN monitored_cases mc ON mc.id = mcf.monitored_case_id AND mc.active AND mc.deleted_at IS NULL
@@ -456,8 +468,19 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
            folders.folder_ids, folders.folder_names, mc.label, jc.status,
            mc.source_status, mc.source_message, mc.monitor_from, mc.created_at,
            mc.last_checked_at, mc.last_successful_check_at, mc.refresh_started_at,
-           latest.publication_date AS last_publication_date, parties.plaintiff, parties.defendant,
-           count(DISTINCT cm.id) FILTER (WHERE movement_publication.publication_date = ${today})::int AS new_count
+           latest.publication_date AS last_publication_date,
+           COALESCE(mc.manual_plaintiff, parties.plaintiff) AS plaintiff,
+           COALESCE(mc.manual_defendant, parties.defendant) AS defendant,
+           mc.manual_plaintiff, mc.manual_defendant,
+           (parties.plaintiff IS NOT NULL OR parties.defendant IS NOT NULL) AS official_parties_available,
+           count(DISTINCT cm.id) FILTER (WHERE
+             movement_publication.publication_date = ${today}
+             OR (
+               movement_publication.publication_kind = 'AGREEMENT'
+               AND movement_publication.agreement_date = movement_publication.publication_date
+               AND movement_publication.publication_date + 1 = ${today}::date
+             )
+           )::int AS new_count
     FROM monitored_cases mc
     JOIN judicial_cases jc ON jc.id = mc.case_id
     JOIN courts c ON c.id = jc.court_id
@@ -505,6 +528,8 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
     refreshStartedAt: row.refresh_started_at ? isoTimestamp(row.refresh_started_at) : undefined,
     lastPublicationDate: row.last_publication_date ? isoDate(row.last_publication_date) : undefined, newCount: row.new_count,
     plaintiff: row.plaintiff ?? undefined, defendant: row.defendant ?? undefined,
+    manualPlaintiff: row.manual_plaintiff ?? undefined, manualDefendant: row.manual_defendant ?? undefined,
+    officialPartiesAvailable: Boolean(row.official_parties_available),
   }));
 }
 
@@ -654,7 +679,22 @@ export async function listOrganizationMovements(organizationId: string, from: st
            jc.case_number_normalized AS case_number, jc.case_type, c.name AS court_name,
            ja.jurisdiction, jp.publication_date, jp.agreement_date, jp.official_text,
            jp.publication_kind, jp.retrieved_at, jp.notebook, fsd.session_date, fsd.result, fsd.judgment, folders.folder_name,
-           parties.plaintiff, parties.defendant
+           COALESCE(mc.manual_plaintiff, parties.plaintiff) AS plaintiff,
+           COALESCE(mc.manual_defendant, parties.defendant) AS defendant,
+           CASE
+             WHEN jp.publication_kind = 'AGREEMENT'
+               AND jp.agreement_date = jp.publication_date
+               AND NOT (jp.publication_date BETWEEN ${from} AND ${to})
+               AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
+             THEN jp.publication_date + 1
+             ELSE jp.publication_date
+           END AS display_date,
+           (
+             jp.publication_kind = 'AGREEMENT'
+             AND jp.agreement_date = jp.publication_date
+             AND NOT (jp.publication_date BETWEEN ${from} AND ${to})
+             AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
+           ) AS carried_forward
     FROM case_movements cm
     JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
     JOIN judicial_cases jc ON jc.id = mc.case_id
@@ -675,13 +715,20 @@ export async function listOrganizationMovements(organizationId: string, from: st
     ) folders ON true
     WHERE mc.organization_id = ${organizationId}
       AND mc.active AND mc.deleted_at IS NULL
-      AND jp.publication_date BETWEEN ${from} AND ${to}
+      AND (
+        jp.publication_date BETWEEN ${from} AND ${to}
+        OR (
+          jp.publication_kind = 'AGREEMENT'
+          AND jp.agreement_date = jp.publication_date
+          AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
+        )
+      )
       AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
       AND (${selectedFolderId}::uuid IS NULL OR EXISTS (
         SELECT 1 FROM monitored_case_folders selected
         WHERE selected.monitored_case_id = mc.id AND selected.folder_id = ${selectedFolderId}
       ))
-    ORDER BY jp.publication_date DESC, cm.detected_at DESC
+    ORDER BY display_date DESC, jp.publication_date DESC, cm.detected_at DESC
     LIMIT 500
   `;
   return rows.map((row): OrganizationMovementRecord => ({
@@ -705,7 +752,44 @@ export async function listOrganizationMovements(organizationId: string, from: st
     defendant: row.defendant ?? null,
     retrieved_at: isoTimestamp(row.retrieved_at),
     notebook: row.notebook ?? null,
+    display_date: isoDate(row.display_date),
+    carried_forward: Boolean(row.carried_forward),
   }));
+}
+
+export async function updateMonitoredCaseManualParties(input: {
+  organizationId: string;
+  userId: string;
+  monitoredCaseId: string;
+  plaintiff?: string | null;
+  defendant?: string | null;
+}): Promise<boolean> {
+  const plaintiff = input.plaintiff?.replace(/\s+/g, " ").trim() || null;
+  const defendant = input.defendant?.replace(/\s+/g, " ").trim() || null;
+  return db().begin(async (tx) => {
+    const rows = await tx`
+      UPDATE monitored_cases mc
+      SET manual_plaintiff = ${plaintiff}, manual_defendant = ${defendant}
+      FROM judicial_cases jc
+      JOIN judicial_authorities ja ON ja.id = jc.authority_id
+      WHERE mc.id = ${input.monitoredCaseId}
+        AND mc.organization_id = ${input.organizationId}
+        AND mc.case_id = jc.id
+        AND ja.jurisdiction = 'FEDERAL'
+        AND mc.active AND mc.deleted_at IS NULL
+      RETURNING mc.id
+    `;
+    if (!rows.length) return false;
+    await tx`
+      INSERT INTO audit_logs (actor_user_id, organization_id, action, entity_type, entity_id, metadata)
+      VALUES (
+        ${input.userId}, ${input.organizationId}, 'MONITORED_CASE_PARTIES_UPDATED',
+        'monitored_case', ${input.monitoredCaseId},
+        ${tx.json({ plaintiffProvided: Boolean(plaintiff), defendantProvided: Boolean(defendant), source: "USER" })}
+      )
+    `;
+    return true;
+  });
 }
 
 export async function deleteMonitoredCase(organizationId: string, userId: string, monitoredCaseId: string): Promise<boolean> {
@@ -748,7 +832,9 @@ export async function searchJudicialCases(input: {
     SELECT jc.id AS case_id, watched.id AS monitored_case_id, jc.case_number_normalized, jc.case_type,
            ja.jurisdiction, ja.code AS provider, c.external_id AS court_external_id, c.name AS court_name, c.court_type,
            cir.external_id AS circuit_id, cir.name AS circuit_name,
-           parties.plaintiff, parties.defendant, publications.publication_count, publications.last_publication_date
+           COALESCE(watched.manual_plaintiff, parties.plaintiff) AS plaintiff,
+           COALESCE(watched.manual_defendant, parties.defendant) AS defendant,
+           publications.publication_count, publications.last_publication_date
     FROM judicial_cases jc
     JOIN judicial_authorities ja ON ja.id = jc.authority_id
     JOIN courts c ON c.id = jc.court_id
@@ -805,8 +891,21 @@ export async function dashboardData(organizationId: string, userId: string, from
   const [counts, cases, notifications] = await Promise.all([
     db()`
       SELECT count(DISTINCT mc.id)::int AS cases,
-             count(DISTINCT cm.id) FILTER (WHERE jp.publication_date BETWEEN ${from} AND ${to})::int AS movements,
-             count(DISTINCT cm.id) FILTER (WHERE jp.publication_kind = 'AGREEMENT' AND jp.publication_date = ${today})::int AS agreements_today,
+             count(DISTINCT cm.id) FILTER (WHERE
+               jp.publication_date BETWEEN ${from} AND ${to}
+               OR (
+                 jp.publication_kind = 'AGREEMENT'
+                 AND jp.agreement_date = jp.publication_date
+                 AND jp.publication_date + 1 BETWEEN ${from} AND ${to}
+               )
+             )::int AS movements,
+             count(DISTINCT cm.id) FILTER (WHERE
+               jp.publication_kind = 'AGREEMENT'
+               AND (
+                 jp.publication_date = ${today}
+                 OR (jp.agreement_date = jp.publication_date AND jp.publication_date + 1 = ${today}::date)
+               )
+             )::int AS agreements_today,
              count(DISTINCT n.id) FILTER (WHERE n.channel = 'IN_APP' AND n.user_id = ${userId} AND jp.publication_date = ${today})::int AS unread
       FROM monitored_cases mc
       LEFT JOIN judicial_cases watched ON watched.id = mc.case_id

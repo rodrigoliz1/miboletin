@@ -57,6 +57,13 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   await folderDialog.getByRole("button", { name: "Guardar carpetas" }).click();
   await expect(page.getByText("Carpetas: Amparos estratégicos")).toBeVisible({ timeout: 15_000 });
   await page.goto("/cases");
+  const instantSearch = page.getByLabel("Buscar expedientes");
+  await instantSearch.fill("1511");
+  await expect(page.getByText("1 coincidencia", { exact: true })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "1511/2025" })).toBeVisible();
+  await instantSearch.fill("expediente inexistente");
+  await expect(page.getByRole("heading", { name: "No hay coincidencias." })).toBeVisible();
+  await instantSearch.fill("");
   const watchedRow = page.getByRole("row").filter({ hasText: "1511/2025" });
   await expect(watchedRow).toHaveAttribute("draggable", "true");
   if (testInfo.project.name === "desktop-chromium") {
@@ -244,4 +251,14 @@ test("alta federal muestra acuerdos, listado y resultado reales", async ({ page 
   await expect(page.getByText("Listado para sesión").first()).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText(/14 de agosto de 2026/).first()).toBeVisible();
   await expect(page.getByText(/No ampara/i).first()).toBeVisible();
+  await page.getByRole("button", { name: /Agregar partes|Editar partes/ }).click();
+  await page.getByLabel("Parte actora / quejosa").fill("Parte federal de prueba");
+  await page.getByLabel("Parte demandada / tercero / autoridad").fill("Autoridad federal de prueba");
+  await page.getByRole("button", { name: "Guardar partes" }).click();
+  await expect(page.getByRole("button", { name: /Editar partes/ })).toBeVisible();
+  await expect(page.getByText("Parte federal de prueba", { exact: true })).toBeVisible();
+  await expect(page.getByText("Autoridad federal de prueba", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Editar partes/ }).click();
+  await expect(page.getByLabel("Parte actora / quejosa")).toHaveValue("Parte federal de prueba");
+  await expect(page.getByLabel("Parte demandada / tercero / autoridad")).toHaveValue("Autoridad federal de prueba");
 });

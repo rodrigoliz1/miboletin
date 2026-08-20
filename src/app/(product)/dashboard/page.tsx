@@ -12,15 +12,17 @@ import { selectCurrentSessionMovements } from "@/lib/product/judicial-display";
 export const dynamic = "force-dynamic";
 
 function Movement({ movement, session = false }: { movement: OrganizationMovementRecord; session?: boolean }) {
+  const displayDate = movement.display_date || movement.publication_date;
   return <article className={`movement${session ? " session-movement" : ""}`}>
-    <time className="movement-date"><strong>{movement.publication_date.slice(8, 10)}</strong>{movement.publication_date.slice(5, 7)}/{movement.publication_date.slice(0, 4)}</time>
+    <time className="movement-date"><strong>{displayDate.slice(8, 10)}</strong>{displayDate.slice(5, 7)}/{displayDate.slice(0, 4)}</time>
     <div className="movement-main">
-      <h3><Link href={`/cases/${movement.monitored_case_id}`}>{movement.case_number}</Link>{movement.publication_kind === "SESSION_LISTED" && <span className="tag tag-new">Listado</span>}{movement.publication_kind === "SESSION_RESULT" && <span className="tag tag-new">Sesionado</span>}</h3>
+      <h3><Link href={`/cases/${movement.monitored_case_id}`}>{movement.case_number}</Link>{movement.publication_kind === "SESSION_LISTED" && <span className="tag tag-new">Listado</span>}{movement.publication_kind === "SESSION_RESULT" && <span className="tag tag-new">Sesionado</span>}{movement.carried_forward && <span className="tag tag-new">Revisión adicional</span>}</h3>
       {session && movement.session_date && <small className="session-highlight">Sesión: {movement.session_date}</small>}
       {session && movement.result && <p><strong>Sentido:</strong> {movement.result}</p>}
       {session && movement.judgment && <p><strong>Sentencia:</strong> {movement.judgment}</p>}
       <p>{movement.official_text}</p>
       {(movement.plaintiff || movement.defendant) && <p className="movement-parties"><strong>Partes:</strong> {[movement.plaintiff, movement.defendant].filter(Boolean).join(" / ")}</p>}
+      {movement.carried_forward && <small className="carried-forward-note">Publicación oficial del {movement.publication_date}; se conserva visible hoy porque la fecha del acuerdo coincide con la de publicación.</small>}
       <small>{movement.court_name} · {movement.folder_name ?? "General"}</small>
     </div>
     <CaretRight size={16} className="muted" />

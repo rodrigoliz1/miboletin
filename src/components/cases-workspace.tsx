@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowUpRight, ArrowsOutCardinal, FolderPlus, Folders } from "@phosphor-icons/react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FolderRecord, MonitoredCaseRecord } from "@/lib/product/repository";
 import { SearchableSelect } from "@/components/searchable-select";
 import { FolderPickerDialog } from "@/components/case-folder-picker";
@@ -28,7 +28,18 @@ export function CasesWorkspace({
   const [editing, setEditing] = useState<MonitoredCaseRecord | null>(null);
   const [suggestedFolderId, setSuggestedFolderId] = useState<string>();
   const [draggingId, setDraggingId] = useState<string>();
+  const [search, setSearch] = useState(query ?? "");
   const handledDrop = useRef(false);
+
+  const visibleCases = useMemo(() => {
+    const terms = search.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!terms.length) return cases;
+    return cases.filter((item) => {
+      const haystack = `${item.number} ${item.caseType} ${item.courtName} ${item.circuitName ?? ""} ${item.label ?? ""} ${item.folderNames.join(" ")} ${item.plaintiff ?? ""} ${item.defendant ?? ""}`
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    });
+  }, [cases, search]);
 
   const openFolders = (item: MonitoredCaseRecord, suggested?: string) => {
     setEditing(item);
@@ -67,8 +78,8 @@ export function CasesWorkspace({
         setDraggingId(undefined);
       }}
     >
-      <form className="filters" action="/cases"><input className="filter-control search-wide" name="q" defaultValue={query} aria-label="Buscar expedientes" placeholder="Buscar por número, referencia u órgano" />{selectedFolderId && <input type="hidden" name="folder" value={selectedFolderId} />}<SearchableSelect name="jurisdiction" label="Jurisdicción" options={[{ value: "", label: "Toda jurisdicción", group: "Cobertura" }, { value: "JALISCO", label: "Jalisco", group: "Cobertura", description: "Juzgados y Salas del STJ" }, { value: "FEDERAL", label: "Federal", group: "Cobertura", description: "Acuerdos y sesiones federales" }]} defaultValue={jurisdiction ?? ""} compact searchPlaceholder="Buscar jurisdicción…" /><button className="button button-secondary" type="submit">Filtrar</button></form>
-      {!cases.length ? <div className="empty-product panel"><h2>Aún no hay asuntos en esta vista.</h2><p>Agrega un expediente real o cambia los filtros. No mostramos expedientes simulados.</p><Link className="button button-primary" href="/cases/new">Agregar primer asunto</Link></div> : <div className="table-wrap"><table className="data-table cases-table"><thead><tr><th><span className="sr-only">Mover</span></th><th>Expediente</th><th>Órgano jurisdiccional</th><th>Carpetas</th><th>Jurisdicción</th><th>Última publicación</th><th>Fuente</th><th><span className="sr-only">Abrir</span></th></tr></thead><tbody>{cases.map((item) => <tr
+      <form className="filters" action="/cases"><input className="filter-control search-wide" name="q" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Buscar expedientes" autoComplete="off" placeholder="Buscar por número, referencia u órgano" />{selectedFolderId && <input type="hidden" name="folder" value={selectedFolderId} />}<SearchableSelect name="jurisdiction" label="Jurisdicción" options={[{ value: "", label: "Toda jurisdicción", group: "Cobertura" }, { value: "JALISCO", label: "Jalisco", group: "Cobertura", description: "Juzgados y Salas del STJ" }, { value: "FEDERAL", label: "Federal", group: "Cobertura", description: "Acuerdos y sesiones federales" }]} defaultValue={jurisdiction ?? ""} compact searchPlaceholder="Buscar jurisdicción…" /><button className="button button-secondary" type="submit">Filtrar</button><span className="filter-live-count" aria-live="polite">{visibleCases.length} {visibleCases.length === 1 ? "coincidencia" : "coincidencias"}</span></form>
+      {!visibleCases.length ? <div className="empty-product panel"><h2>{cases.length ? "No hay coincidencias." : "Aún no hay asuntos en esta vista."}</h2><p>{cases.length ? "La lista se actualiza mientras escribes. Prueba con otro número, referencia u órgano." : "Agrega un expediente real o cambia los filtros. No mostramos expedientes simulados."}</p>{!cases.length && <Link className="button button-primary" href="/cases/new">Agregar primer asunto</Link>}</div> : <div className="table-wrap"><table className="data-table cases-table"><thead><tr><th><span className="sr-only">Mover</span></th><th>Expediente</th><th>Órgano jurisdiccional</th><th>Carpetas</th><th>Jurisdicción</th><th>Última publicación</th><th>Fuente</th><th><span className="sr-only">Abrir</span></th></tr></thead><tbody>{visibleCases.map((item) => <tr
         key={item.id}
         draggable
         data-dragging={draggingId === item.id}

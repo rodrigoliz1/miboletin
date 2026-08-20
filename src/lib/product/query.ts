@@ -40,6 +40,24 @@ export function monthStartInMexicoCity(now = new Date()): string {
   return `${dateInMexicoCity(now).slice(0, 7)}-01`;
 }
 
+export function shiftIsoDate(value: string, days: number): string {
+  if (!isIsoDate(value)) throw new Error(`Fecha ISO inválida: ${value}`);
+  const date = new Date(`${value}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function resolutionVisibilityDates(publicationDate: string, agreementDate?: string | null): string[] {
+  if (!isIsoDate(publicationDate)) return [];
+  return agreementDate === publicationDate
+    ? [publicationDate, shiftIsoDate(publicationDate, 1)]
+    : [publicationDate];
+}
+
+export function resolutionIsVisibleOn(publicationDate: string, agreementDate: string | null | undefined, bulletinDate: string): boolean {
+  return isIsoDate(bulletinDate) && resolutionVisibilityDates(publicationDate, agreementDate).includes(bulletinDate);
+}
+
 export function normalizeDateRange(
   input: { from?: string | null; to?: string | null },
   now = new Date(),
