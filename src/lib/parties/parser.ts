@@ -1,4 +1,4 @@
-import { cleanPartyRaw, inferPartyType, normalizePartyName, searchablePartyName } from "./normalization";
+import { cleanPartyRaw, inferPartyType, normalizePartyName, partyTokenSignature, searchablePartyName } from "./normalization";
 import type { PartyCandidate, PartySide, PartyType } from "./types";
 
 export const PARTY_PARSER_VERSION = "party-name-parser-2";
@@ -79,6 +79,7 @@ export function parsePartyNames(value: string | null | undefined, options: Parse
       nameRaw: clean,
       nameNormalized: normalized,
       searchName: searchablePartyName(clean, partyType),
+      tokenSignature: partyTokenSignature(clean, partyType),
       canonicalName: clean,
       partyType,
       side: options.side,

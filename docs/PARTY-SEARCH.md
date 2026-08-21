@@ -11,7 +11,7 @@ expediente de Sala → datos de origen → case_relations
 índice PostgreSQL → ranking → /api/search/parties → /search/names
 ```
 
-`case_parties` representa la identidad procesal consolidada dentro de un expediente y rol. `case_party_mentions` conserva cada evidencia original: publicación, snapshot, método, fecha, URL, versión y confianza. El texto oficial nunca se reemplaza por la forma normalizada.
+`case_parties` representa la identidad procesal consolidada dentro de un expediente y rol. `case_party_mentions` conserva cada evidencia original: publicación, snapshot, método, fecha, URL, versión y confianza. `token_signature` permite comparar el mismo conjunto de palabras en distinto orden sin alterar `name_raw`. El texto oficial nunca se reemplaza por la forma normalizada.
 
 ## Extracción
 
@@ -25,7 +25,21 @@ El extractor no usa modelos externos ni requiere nuevas variables de entorno. La
 
 La forma de búsqueda elimina diferencias de Unicode, acentos, puntuación y mayúsculas. Las personas morales generan además una forma simplificada sin sufijos como `S.A. DE C.V.`; el nombre oficial se conserva intacto.
 
-El ranking combina, en este orden, igualdad oficial, igualdad normalizada, prefijo, contenido, trigramas, similitud por palabra y aliases históricos. Un asunto relacionado recibe una penalización y se identifica expresamente como tal. La búsqueda está paginada y admite jurisdicción, proveedor, órgano, materia, tipo de parte, rol, fechas y resultado directo/relacionado.
+El ranking combina, en este orden, igualdad normalizada, firma exacta de tokens, forma societaria, prefijo, trigramas y similitud por palabra. El conjunto candidato sale de `case_parties` y sus índices B-tree/GIN; la evidencia se obtiene después mediante un `LATERAL`, evitando unir y escanear todas las menciones para cada consulta. Un asunto relacionado recibe una penalización y se identifica expresamente como tal. La búsqueda está paginada y admite jurisdicción, proveedor, órgano, materia, tipo de parte, rol, fechas y resultado directo/relacionado.
+
+## Cobertura comprobable
+
+`judicial_source_catalog` conserva el inventario de órganos observado en los catálogos oficiales. `judicial_source_coverage` registra cada unidad `fuente + órgano + fecha + recurso`, incluso cuando la respuesta oficial contiene cero publicaciones. Conserva las cuatro etapas (discovery, fetch, parse e indexación), conteos, intentos, error y siguiente reintento.
+
+Una fecha mínima y máxima no representa continuidad. La API y la interfaz devuelven por separado órganos con información, unidades completas, unidades pendientes/fallidas y limitaciones técnicas. El estado general permanece `PARTIAL` mientras exista backfill pendiente; STJ se presenta como no enumerable porque su portal de acuerdos requiere una toca y Sala concretas.
+
+`judicial_index_anomalies` registra regresiones evidentes, por ejemplo diez o más publicaciones locales con cero nombres. Administración permite filtrar órganos y programar un periodo; estas acciones están limitadas a `OWNER`/`ADMIN`.
+
+## Búsqueda ampliada
+
+Un cero con cobertura parcial crea un `judicial_deep_search_job`. La petición inicial no queda abierta durante minutos: devuelve el trabajo, la interfaz avanza un lote pequeño y el cron continúa los pendientes. El cursor es persistente, las unidades ya completas se reutilizan y los resultados pasan por el mismo pipeline global, por lo que quedan disponibles para todos los usuarios sin mezclar sus carpetas.
+
+La ampliación automática sólo enumera fuentes que técnicamente lo permiten. CJJ ofrece boletín por órgano/fecha. STJ no ofrece enumeración global de tocas y las listas federales no publican uniformemente nombres de partes; esas limitaciones se muestran expresamente en vez de convertirlas en un falso “sin resultados”.
 
 ## Índice global y vigilancia
 
@@ -42,6 +56,8 @@ pnpm index:global -- --provider=federal-pjf-session-lists --from=2026-08-01 --to
 pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --apply --max-units=250
 pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --max-units=250
 ```
+
+`--resume=latest` sólo reanuda una corrida incompleta que coincida exactamente con proveedor, rango, órgano y circuito solicitados. Así, una corrida histórica pendiente nunca secuestra la indexación del día actual.
 
 El proceso CJJ recorre fecha y órgano del catálogo oficial, conserva `EXP`, resolución y `act_names`/`dem_names`. El federal recorre calendarios y listas públicas por circuito, órgano, fecha y modalidad, conservando `complainant`/`authority`. Ambos son idempotentes, escriben un cursor en `global_index_runs` y pueden limitarse por `--court`, `--circuit` y `--max-units`. El workflow `.github/workflows/global-index.yml` ejecuta el índice cotidiano separado de la vigilancia de clientes; el backfill histórico se opera manualmente por lotes.
 
@@ -95,3 +111,28 @@ pnpm federal:diagnose -- --case=123/2026 --court=119 --type="Amparo Directo" --l
 ```
 
 El diagnóstico sólo imprime métricas y estado (`PARTIES_FOUND`, `NO_PUBLIC_PARTIES`, `PARSER_FAILED`, `SOURCE_FAILED`, `DETAIL_NOT_FETCHED`, `DETAIL_UNAVAILABLE` o `DETAIL_INVALID`), nunca nombres. La administración muestra fechas extremas, casos, publicaciones, capturas, partes y tasa de extracción por fuente. Esas fechas no prometen continuidad: el backfill puede estar todavía cubriendo periodos intermedios.
+
+## Operación
+
+```bash
+# Sincronizar catálogos oficiales y revisar cobertura
+pnpm judicial:catalogs:sync
+pnpm judicial:index:status
+pnpm judicial:index:status -- --provider=jalisco-cjj --all-courts
+
+# Backfill en seco y aplicación acotada/resumible
+pnpm judicial:backfill -- --provider=jalisco-cjj --from=2026-01-01 --to=2026-01-31 --max-units=25
+pnpm judicial:backfill -- --provider=jalisco-cjj --from=2026-01-01 --to=2026-01-31 --apply --max-units=250
+pnpm judicial:backfill -- --provider=jalisco-cjj --from=2026-01-01 --to=2026-01-31 --apply --resume=latest --max-units=250
+
+# Continuar trabajos solicitados desde búsqueda/Administración
+pnpm judicial:deep-worker -- --jobs=4 --units=40
+
+# Reprocesar documentos ya almacenados con la versión actual del parser
+pnpm judicial:reindex -- --provider=jalisco-cjj --from=2026-01-01 --to=2026-01-31
+pnpm judicial:reindex -- --provider=jalisco-cjj --from=2026-01-01 --to=2026-01-31 --apply --reprocess
+
+# Auditoría forense A→F y consulta diagnóstica del índice
+pnpm judicial:audit -- --provider=jalisco-cjj --court=M05 --from=2026-08-21 --to=2026-08-21 --name="Josefina Fuentes Corral"
+pnpm judicial:search -- --name="CONTRERAS VILLEGAS, MARIA ELENA"
+```

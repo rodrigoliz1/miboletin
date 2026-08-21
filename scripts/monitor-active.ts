@@ -138,8 +138,13 @@ async function main() {
       "",
     ].join("\n"));
   }
+  if (failed > 0 && criticalFailures === 0 && process.env.GITHUB_ACTIONS === "true") {
+    console.log(`::warning title=Fuentes judiciales con incidencia::${failed} revisiones quedaron parciales. El detalle y los reintentos se conservaron sin detener la vigilancia.`);
+  }
   await closeDb();
-  if (criticalFailures > 0 || (cases.length > 0 && succeeded === 0)) process.exitCode = 2;
+  // Una fuente pública temporalmente indisponible deja trazabilidad y estado DEGRADED,
+  // pero no debe cancelar los demás cron ni convertir un reintento esperado en fallo de infraestructura.
+  if (criticalFailures > 0) process.exitCode = 2;
 }
 
 void main().catch(async (error: unknown) => {

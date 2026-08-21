@@ -25,7 +25,7 @@ jobs:
       SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 11.12.0
       - uses: actions/setup-node@v5
@@ -38,6 +38,8 @@ jobs:
         run: |
           INDEX_DATE=$(TZ=America/Mexico_City date +%F)
           pnpm index:global -- --provider=jalisco-cjj --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --max-units=250
+      - name: Continuar búsquedas ampliadas y backfills solicitados
+        run: pnpm judicial:deep-worker -- --jobs=4 --units=40
 
   federal:
     runs-on: ubuntu-latest
@@ -48,7 +50,7 @@ jobs:
       FEDERAL_SESSION_BASE: https://www.dgej.cjf.gob.mx/SiseInternet
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 11.12.0
       - uses: actions/setup-node@v5

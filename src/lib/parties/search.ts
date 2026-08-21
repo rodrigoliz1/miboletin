@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db/client";
-import { normalizePartyName, searchablePartyName } from "./normalization";
+import { normalizePartyName, partyTokenSignature, searchablePartyName } from "./normalization";
 import type { PartyType } from "./types";
 import { getIndexCoverage, type IndexCoverageRecord } from "./discovery";
 
@@ -62,6 +62,7 @@ export interface PartySearchResponse {
   total: number;
   results: PartySearchResult[];
   coverage: IndexCoverageRecord[];
+  coverageComplete: boolean;
 }
 
 export interface IndexedCaseDetail {
@@ -91,53 +92,59 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
   const normalized = normalizePartyName(input.query);
   if (normalized.length < 2) throw new Error("Escribe al menos dos caracteres");
   const searchName = searchablePartyName(input.query, input.partyType);
+  const tokenSignature = partyTokenSignature(input.query, input.partyType);
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(50, Math.max(5, input.pageSize ?? 20));
   const offset = (page - 1) * pageSize;
   const rows = await db()`
-    WITH indexed_names AS (
+    WITH candidate_ids AS MATERIALIZED (
+      SELECT id FROM case_parties WHERE active AND name_normalized = ${normalized}
+      UNION
+      SELECT id FROM case_parties WHERE active AND search_name = ${searchName}
+      UNION
+      SELECT id FROM case_parties WHERE active AND token_signature = ${tokenSignature}
+      UNION
+      SELECT id FROM case_parties WHERE active AND name_normalized LIKE ${`${normalized}%`}
+      UNION
+      SELECT id FROM case_parties WHERE active AND search_name LIKE ${`${searchName}%`}
+      UNION
+      SELECT id FROM case_parties WHERE active AND name_normalized % ${normalized}
+      UNION
+      SELECT id FROM case_parties WHERE active AND search_name % ${searchName}
+      UNION
+      SELECT id FROM case_parties WHERE active AND token_signature % ${tokenSignature}
+      UNION
+      SELECT id FROM case_parties WHERE active AND name_normalized %> ${normalized}
+    ), candidate_names AS MATERIALIZED (
       SELECT cp.id AS case_party_id, cp.case_id, cp.name_raw, cp.name_normalized, cp.search_name,
-             cp.side, cp.party_type, COALESCE(cp.extraction_method, 'legacy') AS method,
+             cp.token_signature, cp.side, cp.party_type,
+             COALESCE(cp.extraction_method, 'legacy') AS method,
              COALESCE(cp.confidence, 0.75)::float AS confidence,
-             NULL::text AS source_url, NULL::date AS publication_date
-      FROM case_parties cp WHERE cp.active
-      UNION ALL
-      SELECT cpm.case_party_id, cpm.case_id, cpm.name_raw, cpm.name_normalized, cpm.search_name,
-             cpm.side, cpm.party_type, cpm.extraction_method, cpm.confidence::float,
-             cpm.source_url, cpm.publication_date
-      FROM case_party_mentions cpm
-    ), scored_names AS (
-      SELECT DISTINCT ON (idx.case_party_id)
-             idx.*,
              GREATEST(
-               CASE WHEN idx.name_normalized = ${normalized} THEN 1.0 ELSE 0 END,
-               CASE WHEN idx.search_name = ${searchName} THEN 0.98 ELSE 0 END,
-               CASE WHEN idx.name_normalized LIKE ${`${normalized}%`} OR idx.search_name LIKE ${`${searchName}%`} THEN 0.92 ELSE 0 END,
-               CASE WHEN idx.name_normalized LIKE ${`%${normalized}%`} OR idx.search_name LIKE ${`%${searchName}%`} THEN 0.86 ELSE 0 END,
-               similarity(idx.name_normalized, ${normalized}) * 0.82,
-               similarity(idx.search_name, ${searchName}) * 0.84,
-               word_similarity(${normalized}, idx.name_normalized) * 0.88
+               CASE WHEN cp.name_normalized = ${normalized} THEN 1.0 ELSE 0 END,
+               CASE WHEN cp.token_signature = ${tokenSignature} THEN 0.97 ELSE 0 END,
+               CASE WHEN cp.search_name = ${searchName} THEN 0.96 ELSE 0 END,
+               CASE WHEN cp.name_normalized LIKE ${`${normalized}%`} OR cp.search_name LIKE ${`${searchName}%`} THEN 0.90 ELSE 0 END,
+               similarity(cp.name_normalized, ${normalized}) * 0.86,
+               similarity(cp.search_name, ${searchName}) * 0.88,
+               similarity(cp.token_signature, ${tokenSignature}) * 0.90,
+               word_similarity(${normalized}, cp.name_normalized) * 0.90
              ) AS score
-      FROM indexed_names idx
-      WHERE (${input.partyType ?? null}::text IS NULL OR idx.party_type = ${input.partyType ?? null})
-        AND (${input.role ?? null}::text IS NULL OR idx.side = ${input.role ?? null})
-        AND (
-          idx.name_normalized = ${normalized} OR idx.search_name = ${searchName}
-          OR idx.name_normalized LIKE ${`${normalized}%`} OR idx.search_name LIKE ${`${searchName}%`}
-          OR idx.name_normalized LIKE ${`%${normalized}%`} OR idx.search_name LIKE ${`%${searchName}%`}
-          OR idx.name_normalized % ${normalized} OR idx.search_name % ${searchName}
-          OR word_similarity(${normalized}, idx.name_normalized) >= 0.52
-        )
-      ORDER BY idx.case_party_id, score DESC, idx.confidence DESC, idx.publication_date DESC NULLS LAST
+      FROM case_parties cp
+      JOIN candidate_ids candidate ON candidate.id = cp.id
+      WHERE cp.active
+        AND (${input.partyType ?? null}::text IS NULL OR cp.party_type = ${input.partyType ?? null})
+        AND (${input.role ?? null}::text IS NULL OR cp.side = ${input.role ?? null})
     ), direct_matches AS (
-      SELECT sn.case_id AS result_case_id, sn.case_id AS matched_case_id, sn.*, NULL::text AS relation_type, true AS direct
-      FROM scored_names sn WHERE sn.score >= 0.42
+      SELECT candidate.case_id AS result_case_id, candidate.case_id AS matched_case_id,
+             candidate.*, NULL::text AS relation_type, true AS direct
+      FROM candidate_names candidate WHERE candidate.score >= 0.55
     ), related_matches AS (
-      SELECT cr.source_case_id AS result_case_id, sn.case_id AS matched_case_id, sn.*,
+      SELECT cr.source_case_id AS result_case_id, candidate.case_id AS matched_case_id, candidate.*,
              cr.relation_type, false AS direct
-      FROM scored_names sn
-      JOIN case_relations cr ON cr.target_case_id = sn.case_id AND cr.confidence >= 0.9
-      WHERE sn.score >= 0.55
+      FROM candidate_names candidate
+      JOIN case_relations cr ON cr.target_case_id = candidate.case_id AND cr.confidence >= 0.9
+      WHERE candidate.score >= 0.65
     ), all_matches AS (
       SELECT * FROM direct_matches
       UNION ALL
@@ -164,7 +171,9 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
     )
     SELECT filtered.*, watched.id AS monitored_case_id,
            publications.publication_count, publications.last_publication_date,
-           parties.plaintiff, parties.defendant,
+           parties.plaintiff, parties.defendant, evidence.source_url, evidence.publication_date,
+           COALESCE(evidence.extraction_method, filtered.method) AS evidence_method,
+           COALESCE(evidence.confidence, filtered.confidence)::float AS evidence_confidence,
            count(*) OVER()::int AS total
     FROM filtered
     LEFT JOIN monitored_cases watched ON watched.case_id = filtered.result_case_id
@@ -178,10 +187,18 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side IN ('defendant','tercero_interesado','autoridad_responsable','apelado')) AS defendant
       FROM case_parties cp WHERE cp.case_id = filtered.result_case_id AND cp.active
     ) parties ON true
+    LEFT JOIN LATERAL (
+      SELECT cpm.source_url, cpm.publication_date, cpm.extraction_method, cpm.confidence
+      FROM case_party_mentions cpm
+      WHERE cpm.case_party_id = filtered.case_party_id
+      ORDER BY cpm.publication_date DESC NULLS LAST, cpm.created_at DESC
+      LIMIT 1
+    ) evidence ON true
     ORDER BY filtered.final_score DESC, publications.last_publication_date DESC NULLS LAST,
              filtered.case_number_normalized
     LIMIT ${pageSize} OFFSET ${offset}
   `;
+  const coverage = await getIndexCoverage();
   return {
     query: input.query.trim(), page, pageSize, total: Number(rows[0]?.total ?? 0),
     results: rows.map((row): PartySearchResult => {
@@ -200,12 +217,13 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
         defendant: row.defendant ? String(row.defendant) : undefined,
         evidence: {
           nameRaw: String(row.name_raw), role: String(row.side), partyType: row.party_type,
-          method: String(row.method), confidence: Number(row.confidence), sourceUrl: row.source_url ? String(row.source_url) : undefined,
+          method: String(row.evidence_method), confidence: Number(row.evidence_confidence), sourceUrl: row.source_url ? String(row.source_url) : undefined,
           publicationDate: isoDate(row.publication_date), direct,
         },
       };
     }),
-    coverage: rows.length ? [] : await getIndexCoverage(),
+    coverage,
+    coverageComplete: coverage.length > 0 && coverage.every((item) => item.coverageState === "COMPLETE"),
   };
 }
 

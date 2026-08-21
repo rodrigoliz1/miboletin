@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
-import { ArrowRight, BellRinging, Buildings, DownloadSimple, MagnifyingGlass, ShieldCheck, UserFocus, Warning } from "@phosphor-icons/react";
+import { useCallback, useRef, useState } from "react";
+import { ArrowClockwise, ArrowRight, BellRinging, Buildings, DownloadSimple, MagnifyingGlass, ShieldCheck, UserFocus, Warning } from "@phosphor-icons/react";
 
 type SearchResult = {
   caseId: string; monitoredCaseId?: string; number: string; caseType: string; jurisdiction: "JALISCO" | "FEDERAL";
@@ -13,8 +13,18 @@ type SearchResult = {
   evidence: { method: string; confidence: number; sourceUrl?: string; publicationDate?: string; direct: boolean };
 };
 
-type SearchCoverage = { provider: string; earliestIndexedDate?: string; latestIndexedDate?: string; casesIndexed: number; publicationsIndexed: number };
-type SearchResponse = { query: string; page: number; pageSize: number; total: number; results: SearchResult[]; coverage?: SearchCoverage[] };
+type SearchCoverage = {
+  provider: string; earliestIndexedDate?: string; latestIndexedDate?: string; casesIndexed: number; publicationsIndexed: number;
+  partiesIndexed: number; catalogCourts: number; expectedCourts: number; courtsWithInformation: number; courtsWithParties: number;
+  coverageUnits: number; completeUnits: number; incompleteUnits: number; coverageState: "COMPLETE" | "PARTIAL" | "UNSUPPORTED";
+  lastCoverageAt?: string; limitation?: string;
+};
+type SearchResponse = { query: string; page: number; pageSize: number; total: number; results: SearchResult[]; coverage?: SearchCoverage[]; coverageComplete: boolean };
+type DeepJob = {
+  id: string; status: "PENDING" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELLED";
+  unitsTotal: number; unitsProcessed: number; unitsSucceeded: number; unitsFailed: number;
+  resultsBefore: number; resultsAfter: number; lastError?: string; details: { limitations?: string[]; scope?: string };
+};
 
 const roleLabels: Record<string, string> = {
   plaintiff: "Actor", defendant: "Demandado", quejoso: "Quejoso", tercero_interesado: "Tercero interesado",
@@ -46,6 +56,32 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [watchState, setWatchState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [deepJob, setDeepJob] = useState<DeepJob | null>(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+  const deepStartedFor = useRef("");
+
+  const deepPayload = useCallback((currentResults: number) => ({
+    query: query.trim(), currentResults,
+    ...(jurisdiction ? { jurisdiction } : {}), ...(provider ? { provider } : {}),
+    ...(from ? { from } : {}), ...(to ? { to } : {}),
+  }), [from, jurisdiction, provider, query, to]);
+
+  const startDeepSearch = useCallback(async (currentResults: number) => {
+    setDeepLoading(true);
+    try {
+      const request = await fetch("/api/search/parties/deep", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(deepPayload(currentResults)) });
+      const payload = await request.json() as { job?: DeepJob; error?: string };
+      if (!request.ok || !payload.job) throw new Error(payload.error ?? "No fue posible ampliar la búsqueda");
+      setDeepJob(payload.job);
+      if (payload.job.unitsTotal > payload.job.unitsProcessed && payload.job.status !== "COMPLETE") {
+        const step = await fetch("/api/search/parties/deep", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: payload.job.id, maxUnits: 2 }) });
+        const stepped = await step.json() as { job?: DeepJob };
+        if (stepped.job) setDeepJob(stepped.job);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No fue posible ampliar la búsqueda");
+    } finally { setDeepLoading(false); }
+  }, [deepPayload]);
 
   const runSearch = useCallback(async (page = 1) => {
     if (query.trim().length < 2) { setError("Escribe al menos dos caracteres del nombre."); return; }
@@ -64,11 +100,29 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
       const payload = await request.json() as SearchResponse & { error?: string };
       if (!request.ok) throw new Error(payload.error ?? "No fue posible completar la búsqueda");
       setResponse(payload);
+      const deepKey = JSON.stringify(deepPayload(payload.total));
+      if (payload.total === 0 && !payload.coverageComplete && deepStartedFor.current !== deepKey) {
+        deepStartedFor.current = deepKey;
+        void startDeepSearch(0);
+      }
       window.history.replaceState(null, "", `/search/names?q=${encodeURIComponent(query.trim())}`);
     } catch (cause) {
       setResponse(null); setError(cause instanceof Error ? cause.message : "No fue posible completar la búsqueda");
     } finally { setLoading(false); }
-  }, [from, jurisdiction, matter, partyType, provider, query, resultType, role, to]);
+  }, [deepPayload, from, jurisdiction, matter, partyType, provider, query, resultType, role, startDeepSearch, to]);
+
+  async function continueDeepSearch() {
+    if (!deepJob) return;
+    setDeepLoading(true); setError("");
+    try {
+      const request = await fetch("/api/search/parties/deep", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: deepJob.id, maxUnits: 3 }) });
+      const payload = await request.json() as { job?: DeepJob; error?: string };
+      if (!request.ok || !payload.job) throw new Error(payload.error ?? "La búsqueda continuará en segundo plano");
+      setDeepJob(payload.job);
+      if (payload.job.resultsAfter > (response?.total ?? 0)) await runSearch(1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "La búsqueda continuará en segundo plano"); }
+    finally { setDeepLoading(false); }
+  }
 
   async function createWatch() {
     if (query.trim().length < 3) return;
@@ -122,13 +176,14 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
     {error && <section className="search-state danger-notice" role="alert"><Warning size={22} /><div><strong>No se pudo completar la consulta.</strong><p>{error}</p></div></section>}
     {!loading && response && <>
       <section className="party-search-summary" aria-live="polite"><div><strong>{response.total}</strong><span>{response.total === 1 ? "asunto localizado" : "asuntos localizados"}</span></div>{response.total > 0 && <div className="party-report-actions"><a className="button button-secondary button-small" href={`/api/reports/search?${reportParams}&detail=simple`}><DownloadSimple size={14} /> Informe simple</a><a className="button button-secondary button-small" href={`/api/reports/search?${reportParams}&detail=rigorous`}><DownloadSimple size={14} /> Informe riguroso</a></div>}</section>
-      {!response.results.length ? <section className="panel party-search-empty"><UserFocus size={28} /><h2>No encontramos coincidencias en el índice disponible.</h2><p>Prueba con ambos apellidos, una parte distintiva de la razón social o filtros menos restrictivos. La ausencia de resultados no acredita que no existan otros asuntos.</p>{Boolean(response.coverage?.length) && <div className="party-empty-coverage"><strong>Fechas presentes en el índice</strong><small>La cobertura es incremental y puede contener periodos intermedios aún no incorporados.</small>{response.coverage?.map((item) => <span key={item.provider}>{item.provider === "jalisco-cjj" ? "Poder Judicial de Jalisco" : item.provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia de Jalisco" : "Poder Judicial de la Federación"}: {item.earliestIndexedDate && item.latestIndexedDate ? `${humanDate(item.earliestIndexedDate)} a ${humanDate(item.latestIndexedDate)}` : "sin publicaciones fechadas"} · {item.casesIndexed} asuntos</span>)}</div>}</section> : <div className="party-search-results">{response.results.map((result) => <article className="party-result-card" key={result.caseId}>
+      {!response.results.length ? <section className="panel party-search-empty"><UserFocus size={28} /><h2>{response.coverageComplete ? "No se localizaron coincidencias en el periodo revisado." : "Sin coincidencias en el índice disponible."}</h2><p>{response.coverageComplete ? "Las unidades seleccionadas fueron procesadas sin encontrar ese nombre." : "La plataforma está ampliando la revisión donde la fuente permite enumerar publicaciones. Un cero provisional no acredita que el asunto no exista."}</p>{deepJob && <div className="party-deep-status"><div><strong>{deepJob.unitsProcessed >= deepJob.unitsTotal ? deepJob.unitsFailed ? "Revisión parcial concluida" : "Revisión ampliada concluida" : "Ampliando búsqueda en fuentes judiciales"}</strong><span>{deepJob.unitsProcessed.toLocaleString("es-MX")} de {deepJob.unitsTotal.toLocaleString("es-MX")} unidades revisadas · {deepJob.resultsAfter} coincidencias indexadas</span></div>{deepJob.unitsProcessed < deepJob.unitsTotal && deepJob.unitsTotal > 0 && <button className="button button-secondary button-small" type="button" onClick={() => void continueDeepSearch()} disabled={deepLoading}><ArrowClockwise size={14} /> {deepLoading ? "Revisando…" : "Continuar ahora"}</button>}{deepJob.details.limitations?.map((item) => <small key={item}>{item}</small>)}</div>}</section> : <div className="party-search-results">{response.results.map((result) => <article className="party-result-card" key={result.caseId}>
         <header><div><span className={`party-match-kind ${result.matchKind === "RELATED" ? "is-related" : ""}`}>{matchLabel(result)}</span><h2>{result.matchName}</h2><p>{roleLabels[result.matchRole] ?? result.matchRole} · {result.partyType === "COMPANY" ? "Persona moral" : result.partyType === "PERSON" ? "Persona física" : result.partyType === "AUTHORITY" ? "Autoridad" : "Tipo no determinado"}</p></div></header>
         <div className="party-result-case"><div><small>EXPEDIENTE</small><strong>{result.number}</strong><span>{result.caseType}</span></div><div><small>ÓRGANO JURISDICCIONAL</small><strong>{result.courtName}</strong><span>{result.jurisdiction === "JALISCO" ? "Poder Judicial de Jalisco" : "Poder Judicial de la Federación"}</span></div><div><small>PUBLICACIONES</small><strong>{result.publicationCount}</strong><span>Última: {humanDate(result.lastPublicationDate)}</span></div></div>
         {result.matchKind === "RELATED" && <p className="party-related-note"><ShieldCheck size={16} /> El nombre fue publicado en el expediente de origen y este asunto se muestra por una relación procesal verificada. No se afirma que la Sala haya publicado directamente el nombre.</p>}
         <footer><div><Buildings size={15} /><span>{result.matter ?? "Materia no especificada"}</span></div><Link className="button button-primary button-small" href={`/search/names/${result.caseId}`}>Ver expediente y evidencia <ArrowRight size={14} /></Link></footer>
       </article>)}</div>}
       {response.total > response.pageSize && <nav className="party-pagination" aria-label="Paginación de resultados"><button className="button button-secondary button-small" disabled={response.page === 1 || loading} onClick={() => void runSearch(response.page - 1)}>Anterior</button><span>Página {response.page} de {Math.ceil(response.total / response.pageSize)}</span><button className="button button-secondary button-small" disabled={response.page * response.pageSize >= response.total || loading} onClick={() => void runSearch(response.page + 1)}>Siguiente</button></nav>}
+      {Boolean(response.coverage?.length) && <section className="party-coverage-ledger"><header><strong>Cobertura real del índice</strong><span>Los extremos de fecha no implican continuidad.</span></header><div>{response.coverage?.map((item) => <article key={item.provider}><div><strong>{item.provider === "jalisco-cjj" ? "Poder Judicial de Jalisco" : item.provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia de Jalisco" : "Poder Judicial de la Federación"}</strong><span className={`coverage-state is-${item.coverageState.toLowerCase()}`}>{item.coverageState === "COMPLETE" ? "Completa" : item.coverageState === "UNSUPPORTED" ? "No enumerable" : "Parcial"}</span></div><p>{item.casesIndexed.toLocaleString("es-MX")} asuntos con publicaciones · {item.partiesIndexed.toLocaleString("es-MX")} nombres</p><small>{item.courtsWithInformation} de al menos {item.expectedCourts || "—"} órganos con información · {item.completeUnits} unidades completas · {item.incompleteUnits} pendientes o con incidencia</small>{item.limitation && <em>{item.limitation}</em>}</article>)}</div></section>}
     </>}
   </div>;
 }

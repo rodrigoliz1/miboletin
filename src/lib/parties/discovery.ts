@@ -23,11 +23,27 @@ export interface IndexCoverageRecord {
   mentionsIndexed: number;
   partyExtractionRate: number;
   statusCounts: Record<string, number>;
+  catalogCourts: number;
+  expectedCourts: number;
+  courtsWithInformation: number;
+  courtsWithParties: number;
+  coverageUnits: number;
+  completeUnits: number;
+  incompleteUnits: number;
+  lastCoverageAt?: string;
+  coverageState: "COMPLETE" | "PARTIAL" | "UNSUPPORTED";
+  limitation?: string;
 }
 
 function isoDate(value: unknown): string | undefined {
   if (!value) return undefined;
   return (value instanceof Date ? value.toISOString() : String(value)).slice(0, 10);
+}
+
+let coverageCache: { expiresAt: number; value: IndexCoverageRecord[] } | null = null;
+
+export function invalidateIndexCoverageCache() {
+  coverageCache = null;
 }
 
 export async function recomputePartyDiscoveryStatus(
@@ -140,6 +156,7 @@ export async function recordPartyDiscoveryFailure(input: {
 }
 
 export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
+  if (coverageCache && coverageCache.expiresAt > Date.now()) return coverageCache.value;
   const rows = await db()`
     WITH providers AS (
       SELECT code AS provider FROM judicial_authorities
@@ -173,6 +190,28 @@ export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
       LEFT JOIN case_party_mentions cpm ON cpm.case_id = jc.id
       WHERE ja.code IN ('jalisco-cjj','jalisco-stj-chambers','federal-pjf-session-lists')
       GROUP BY ja.code
+    ), catalog_stats AS (
+      SELECT provider, count(*) FILTER (WHERE active)::int AS catalog_courts
+      FROM judicial_source_catalog
+      GROUP BY provider
+    ), court_stats AS (
+      SELECT ja.code AS provider,
+             count(DISTINCT c.id) FILTER (WHERE jp.id IS NOT NULL)::int AS courts_with_information,
+             count(DISTINCT c.id) FILTER (WHERE cp.id IS NOT NULL AND cp.active)::int AS courts_with_parties
+      FROM judicial_authorities ja
+      LEFT JOIN courts c ON c.authority_id = ja.id
+      LEFT JOIN judicial_cases jc ON jc.court_id = c.id
+      LEFT JOIN judicial_publications jp ON jp.case_id = jc.id
+      LEFT JOIN case_parties cp ON cp.case_id = jc.id
+      WHERE ja.code IN ('jalisco-cjj','jalisco-stj-chambers','federal-pjf-session-lists')
+      GROUP BY ja.code
+    ), coverage_stats AS (
+      SELECT provider, count(*)::int AS coverage_units,
+             count(*) FILTER (WHERE status = 'COMPLETE')::int AS complete_units,
+             count(*) FILTER (WHERE status <> 'COMPLETE')::int AS incomplete_units,
+             max(last_processed_at) AS last_coverage_at
+      FROM judicial_source_coverage
+      GROUP BY provider
     )
     SELECT p.provider,
            ps.earliest_date, ps.latest_date,
@@ -182,11 +221,21 @@ export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
            COALESCE(pt.parties, 0)::int AS parties,
            COALESCE(ms.mentions, 0)::int AS mentions,
            COALESCE(pt.cases_with_parties, 0)::int AS cases_with_parties,
-           COALESCE(statuses.counts, '{}'::jsonb) AS status_counts
+           COALESCE(statuses.counts, '{}'::jsonb) AS status_counts,
+           COALESCE(catalog.catalog_courts, 0)::int AS catalog_courts,
+           COALESCE(courts.courts_with_information, 0)::int AS courts_with_information,
+           COALESCE(courts.courts_with_parties, 0)::int AS courts_with_parties,
+           COALESCE(coverage.coverage_units, 0)::int AS coverage_units,
+           COALESCE(coverage.complete_units, 0)::int AS complete_units,
+           COALESCE(coverage.incomplete_units, 0)::int AS incomplete_units,
+           coverage.last_coverage_at
     FROM providers p
     LEFT JOIN publication_stats ps ON ps.provider = p.provider
     LEFT JOIN party_stats pt ON pt.provider = p.provider
     LEFT JOIN mention_stats ms ON ms.provider = p.provider
+    LEFT JOIN catalog_stats catalog ON catalog.provider = p.provider
+    LEFT JOIN court_stats courts ON courts.provider = p.provider
+    LEFT JOIN coverage_stats coverage ON coverage.provider = p.provider
     LEFT JOIN LATERAL (
       SELECT jsonb_object_agg(grouped.status, grouped.total) AS counts
       FROM (
@@ -198,16 +247,36 @@ export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
     ) statuses ON true
     ORDER BY p.provider
   `;
-  return rows.map((row) => ({
-    provider: String(row.provider),
-    earliestIndexedDate: isoDate(row.earliest_date),
-    latestIndexedDate: isoDate(row.latest_date),
-    snapshotsIndexed: Number(row.snapshots),
-    casesIndexed: Number(row.cases),
-    publicationsIndexed: Number(row.publications),
-    partiesIndexed: Number(row.parties),
-    mentionsIndexed: Number(row.mentions),
-    partyExtractionRate: Number(row.cases) ? Number(row.cases_with_parties) / Number(row.cases) : 0,
-    statusCounts: (row.status_counts ?? {}) as Record<string, number>,
-  }));
+  const value: IndexCoverageRecord[] = rows.map((row): IndexCoverageRecord => {
+    const provider = String(row.provider);
+    const limitation = provider === "jalisco-stj-chambers"
+      ? "La fuente pública permite consultar por toca y Sala, pero no enumerar globalmente todos los asuntos por fecha."
+      : provider === "federal-pjf-session-lists"
+        ? "Las listas públicas permiten descubrir asuntos colegiados, pero no publican de forma uniforme los nombres de las partes."
+        : undefined;
+    return {
+      provider,
+      earliestIndexedDate: isoDate(row.earliest_date),
+      latestIndexedDate: isoDate(row.latest_date),
+      snapshotsIndexed: Number(row.snapshots),
+      casesIndexed: Number(row.cases),
+      publicationsIndexed: Number(row.publications),
+      partiesIndexed: Number(row.parties),
+      mentionsIndexed: Number(row.mentions),
+      partyExtractionRate: Number(row.cases) ? Number(row.cases_with_parties) / Number(row.cases) : 0,
+      statusCounts: (row.status_counts ?? {}) as Record<string, number>,
+      catalogCourts: Number(row.catalog_courts),
+      expectedCourts: provider === "jalisco-cjj" ? Math.max(194, Number(row.catalog_courts)) : provider === "jalisco-stj-chambers" ? 11 : Number(row.catalog_courts),
+      courtsWithInformation: Number(row.courts_with_information),
+      courtsWithParties: Number(row.courts_with_parties),
+      coverageUnits: Number(row.coverage_units),
+      completeUnits: Number(row.complete_units),
+      incompleteUnits: Number(row.incomplete_units),
+      lastCoverageAt: row.last_coverage_at ? (row.last_coverage_at instanceof Date ? row.last_coverage_at.toISOString() : String(row.last_coverage_at)) : undefined,
+      coverageState: provider === "jalisco-stj-chambers" ? "UNSUPPORTED" : "PARTIAL",
+      limitation,
+    };
+  });
+  coverageCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
 }

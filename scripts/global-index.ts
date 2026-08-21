@@ -5,6 +5,8 @@ import { runIngestion } from "../src/lib/ingestion/pipeline";
 import { FederalProvider, type FederalSessionFilter } from "../src/lib/providers/federal/provider";
 import { JaliscoProvider } from "../src/lib/providers/jalisco/provider";
 import { dateInMexicoCity } from "../src/lib/product/query";
+import { recordCoverageUnit, syncSourceCatalog } from "../src/lib/parties/coverage";
+import { createIndexingJaliscoProvider } from "../src/lib/parties/jalisco-catalog";
 
 type GlobalProvider = "jalisco-cjj" | "federal-pjf-session-lists";
 type Unit = { date: string; courtExternalId: string; circuitId?: string; sourceMode?: "LISTED" | "SESSION" };
@@ -58,11 +60,11 @@ function months(from: string, to: string): Array<{ year: number; month: number }
   return result;
 }
 
-async function* jaliscoUnits(from: string, to: string, courtFilter?: string): AsyncGenerator<Unit> {
-  const provider = new JaliscoProvider();
-  const courts = (await provider.fetchCatalogs())
+async function* jaliscoUnits(catalog: Awaited<ReturnType<JaliscoProvider["fetchCatalogs"]>>, from: string, to: string, courtFilter?: string): AsyncGenerator<Unit> {
+  const priority = (matter?: string) => matter === "Mercantil" ? 0 : matter === "Civil" ? 1 : matter === "Familiar" ? 2 : 3;
+  const courts = catalog
     .filter((court) => !courtFilter || court.externalId === courtFilter)
-    .sort((left, right) => left.externalId.localeCompare(right.externalId));
+    .sort((left, right) => priority(left.matter) - priority(right.matter) || left.externalId.localeCompare(right.externalId));
   if (!courts.length) throw new Error("El órgano CJJ solicitado no existe en el catálogo oficial");
   for (const date of dates(from, to)) {
     const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -77,10 +79,17 @@ async function* federalUnits(from: string, to: string, circuitFilter?: string, c
     .filter((circuit) => !circuitFilter || circuit.externalId === circuitFilter)
     .sort((left, right) => Number(left.externalId) - Number(right.externalId));
   if (!circuits.length) throw new Error("El circuito solicitado no existe en el catálogo federal");
+  const courtGroups: Array<{ circuit: (typeof circuits)[number]; courts: Awaited<ReturnType<FederalProvider["getCourts"]>> }> = [];
   for (const circuit of circuits) {
     const courts = (await provider.getCourts(circuit.externalId))
       .filter((court) => court.sessionCapable && (!courtFilter || court.externalId === courtFilter))
       .sort((left, right) => left.externalId.localeCompare(right.externalId));
+    courtGroups.push({ circuit, courts });
+  }
+  await syncSourceCatalog(provider.id, courtGroups.flatMap(({ circuit, courts }) => courts.map((court) => ({
+    ...court, parentExternalId: circuit.externalId, group: circuit.name,
+  }))), !circuitFilter && !courtFilter);
+  for (const { circuit, courts } of courtGroups) {
     for (const court of courts) {
       for (const filter of ["lista", "sesion"] as FederalSessionFilter[]) {
         for (const period of months(from, to)) {
@@ -108,11 +117,19 @@ async function main() {
   const delayMs = Math.min(2_000, Math.max(0, Number(option(args, "delay-ms") ?? 100)));
   const sql = db();
 
+  const today = dateInMexicoCity();
+  const requestedFrom = option(args, "from") ?? today;
+  const requestedTo = option(args, "to") ?? requestedFrom;
+  const requestedCourt = option(args, "court");
+  const requestedCircuit = option(args, "circuit");
   let stored: Record<string, unknown> | undefined;
   if (resume) {
     const rows = resume === "latest"
       ? requestedProvider
-        ? await sql`SELECT * FROM global_index_runs WHERE provider = ${requestedProvider} AND completed_at IS NULL AND status IN ('RUNNING','PARTIAL','FAILED') ORDER BY started_at DESC LIMIT 1`
+        ? await sql`SELECT * FROM global_index_runs WHERE provider = ${requestedProvider} AND date_from = ${requestedFrom} AND date_to = ${requestedTo}
+                    AND court_external_id IS NOT DISTINCT FROM ${requestedCourt ?? null}
+                    AND circuit_external_id IS NOT DISTINCT FROM ${requestedCircuit ?? null}
+                    AND completed_at IS NULL AND status IN ('RUNNING','PARTIAL','FAILED') ORDER BY started_at DESC LIMIT 1`
         : await sql`SELECT * FROM global_index_runs WHERE completed_at IS NULL AND status IN ('RUNNING','PARTIAL','FAILED') ORDER BY started_at DESC LIMIT 1`
       : await sql`SELECT * FROM global_index_runs WHERE job_id = ${resume} LIMIT 1`;
     stored = rows[0];
@@ -124,9 +141,8 @@ async function main() {
   if (!(["jalisco-cjj", "federal-pjf-session-lists"] as string[]).includes(provider)) {
     throw new Error("Use --provider=jalisco-cjj o --provider=federal-pjf-session-lists");
   }
-  const today = dateInMexicoCity();
-  const from = String(stored?.date_from ? String(stored.date_from).slice(0, 10) : option(args, "from") ?? today);
-  const to = String(stored?.date_to ? String(stored.date_to).slice(0, 10) : option(args, "to") ?? from);
+  const from = String(stored?.date_from ? String(stored.date_from).slice(0, 10) : requestedFrom);
+  const to = String(stored?.date_to ? String(stored.date_to).slice(0, 10) : requestedTo);
   if (!validDate(from) || !validDate(to) || from > to) throw new Error("El rango global debe usar AAAA-MM-DD y ser ascendente");
   const court = stored?.court_external_id ? String(stored.court_external_id) : option(args, "court");
   const circuit = stored?.circuit_external_id ? String(stored.circuit_external_id) : option(args, "circuit");
@@ -155,10 +171,11 @@ async function main() {
     await sql`UPDATE global_index_runs SET status = 'RUNNING', completed_at = NULL WHERE job_id = ${jobId}`;
   }
 
+  const jalisco = provider === "jalisco-cjj" ? await createIndexingJaliscoProvider() : null;
   const unitSource = provider === "jalisco-cjj"
-    ? jaliscoUnits(from, to, court)
+    ? jaliscoUnits(jalisco!.courts, from, to, court)
     : federalUnits(from, to, circuit, court);
-  const source = provider === "jalisco-cjj" ? new JaliscoProvider() : new FederalProvider();
+  const source = provider === "jalisco-cjj" ? jalisco!.provider : new FederalProvider();
   let ordinal = 0;
   let attemptedNow = 0;
   let succeededNow = 0;
@@ -169,6 +186,13 @@ async function main() {
     if (ordinal < cursor) { ordinal += 1; continue; }
     if (attemptedNow >= maxUnits) { hasMore = true; break; }
     const result = await runIngestion(source, unit, !apply);
+    if (apply) {
+      await recordCoverageUnit({
+        provider, courtExternalId: unit.courtExternalId, parentExternalId: unit.circuitId,
+        date: unit.date, resourceKind: unit.sourceMode ?? "PUBLICATIONS", result,
+        metadata: { globalIndexJobId: jobId },
+      });
+    }
     attemptedNow += 1;
     totals.unitsAttempted += 1;
     totals.recordsFetched += result.recordsFetched;
@@ -209,9 +233,12 @@ async function main() {
     `;
   }
   console.log(JSON.stringify({ jobId, provider, from, to, dryRun: !apply, status, cursor, hasMore, attemptedNow, succeededNow, failedNow, criticalFailuresNow, ...totals }, null, 2));
+  if (failedNow > 0 && criticalFailuresNow === 0 && process.env.GITHUB_ACTIONS === "true") {
+    console.log(`::warning title=Índice judicial parcial::${failedNow} unidades no pudieron consultarse. Quedaron registradas para reintento sin detener el índice.`);
+  }
   activeGlobalJobId = null;
   await closeDb();
-  if (criticalFailuresNow > 0 || (attemptedNow > 0 && succeededNow === 0)) process.exitCode = 2;
+  if (criticalFailuresNow > 0) process.exitCode = 2;
 }
 
 void main().catch(async (error: unknown) => {

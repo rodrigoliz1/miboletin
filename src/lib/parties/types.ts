@@ -21,6 +21,7 @@ export interface PartyCandidate {
   nameRaw: string;
   nameNormalized: string;
   searchName: string;
+  tokenSignature: string;
   canonicalName: string;
   partyType: PartyType;
   side: PartySide;

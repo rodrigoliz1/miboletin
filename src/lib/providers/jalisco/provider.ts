@@ -166,6 +166,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
   readonly parserVersion = "jalisco-multi-family-json-3";
   private readonly base = process.env.JALISCO_API_BASE ?? "https://api.cjj.gob.mx";
   private readonly officialPage = "https://cjj.gob.mx/bulletin";
+  constructor(private readonly catalogOverride?: JaliscoCourtCatalogItem[]) {}
 
   async discover() {
     return {
@@ -207,12 +208,23 @@ export class JaliscoProvider implements JudicialSourceProvider {
   }
 
   async fetchCatalogs(): Promise<JaliscoCourtCatalogItem[]> {
+    if (this.catalogOverride?.length) return this.catalogOverride;
     if (catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache.value;
     if (catalogRequest) return catalogRequest;
-    catalogRequest = Promise.all(catalogSources.map((source) => this.fetchCatalogSource(source)))
+    const stale = catalogCache?.value;
+    catalogRequest = Promise.allSettled(catalogSources.map((source) => this.fetchCatalogSource(source)))
       .then((groups) => {
-        const value = groups.flat().sort((a, b) => a.group.localeCompare(b.group, "es") || a.name.localeCompare(b.name, "es"));
-        catalogCache = { value, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+        const successful = groups.flatMap((group) => group.status === "fulfilled" ? group.value : []);
+        if (successful.length < 190 && stale?.length && stale.length > successful.length) {
+          catalogCache = { value: stale, expiresAt: Date.now() + 10 * 60 * 1000 };
+          return stale;
+        }
+        if (!successful.length) {
+          const failure = groups.find((group) => group.status === "rejected");
+          throw failure?.status === "rejected" ? failure.reason : new ProviderError("SOURCE_UNAVAILABLE", "Los catálogos de Jalisco no respondieron", true);
+        }
+        const value = successful.sort((a, b) => a.group.localeCompare(b.group, "es") || a.name.localeCompare(b.name, "es"));
+        catalogCache = { value, expiresAt: Date.now() + (value.length >= 190 ? 6 * 60 * 60 * 1000 : 5 * 60 * 1000) };
         return value;
       })
       .finally(() => { catalogRequest = null; });

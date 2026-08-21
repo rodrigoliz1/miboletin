@@ -112,11 +112,16 @@ pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --
 pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --max-units=250
 pnpm index:global -- --provider=federal-pjf-session-lists --from=2026-08-01 --to=2026-08-19 --circuit=3 --apply --max-units=120
 pnpm federal:diagnose -- --case-id=UUID
+pnpm judicial:catalogs:sync
+pnpm judicial:index:status
+pnpm judicial:index:status -- --provider=jalisco-cjj --all-courts
+pnpm judicial:deep-worker -- --jobs=4 --units=40
+pnpm judicial:audit -- --provider=jalisco-cjj --court=M05 --from=2026-08-21 --to=2026-08-21 --name="Josefina Fuentes Corral"
 ```
 
 `judicial_cases` conserva asuntos descubiertos aunque nadie los vigile; las carpetas y `monitored_cases` mantienen la relación privada con el cliente. El job global persiste checkpoints en `global_index_runs`, es idempotente y se ejecuta aparte del monitor de watchlists mediante `.github/workflows/global-index.yml`. Las fechas de cobertura que muestra administración son los extremos presentes en el índice, no una promesa de continuidad mientras el backfill siga incompleto.
 
-La búsqueda por nombre vive en `/search/names`; consulta exclusivamente el índice persistente de PostgreSQL. No depende de que el portal oficial ofrezca una búsqueda remota por persona.
+La búsqueda por nombre vive en `/search/names`; consulta primero el índice persistente de PostgreSQL y, si el cero coincide con cobertura parcial, crea un trabajo ampliado resumible. `judicial_source_coverage` registra fuente, órgano, fecha y recurso; la interfaz nunca trata los extremos de fecha como continuidad ni presenta un cero provisional como ausencia absoluta.
 
 Revisión diaria de todos los órganos que tengan asuntos activos:
 

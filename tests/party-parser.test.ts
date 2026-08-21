@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalSimilarity, findCanonicalParty } from "@/lib/parties/canonicalization";
 import { extractFederalParties } from "@/lib/parties/federal-extractor";
-import { corporateSearchName, normalizePartyName } from "@/lib/parties/normalization";
+import { corporateSearchName, normalizePartyName, partyTokenSignature } from "@/lib/parties/normalization";
 import { parsePartyNames } from "@/lib/parties/parser";
 import { extractParties } from "@/lib/parties/extractor";
 
@@ -46,6 +46,25 @@ describe("PartyNameParser", () => {
 
   it("genera una forma societaria simplificada sin perder palabras distintivas", () => {
     expect(corporateSearchName("BANCO ABC, S.A. DE C.V.")).toBe("BANCO ABC");
+  });
+
+  it.each([
+    "José Pérez López",
+    "JOSE PEREZ LOPEZ",
+    "PÉREZ LÓPEZ, JOSÉ",
+    "C. José Pérez López",
+  ])("produce la misma firma de tokens para %s", (value) => {
+    expect(partyTokenSignature(value)).toBe("JOSE LOPEZ PEREZ");
+  });
+
+  it("equipara razones sociales abreviadas y desarrolladas", () => {
+    expect(corporateSearchName("EMPRESA EJEMPLO SA DE CV")).toBe("EMPRESA EJEMPLO");
+    expect(corporateSearchName("EMPRESA EJEMPLO, S.A. DE C.V.")).toBe("EMPRESA EJEMPLO");
+    expect(corporateSearchName("EMPRESA EJEMPLO SOCIEDAD ANÓNIMA DE CAPITAL VARIABLE")).toBe("EMPRESA EJEMPLO");
+  });
+
+  it("no convierte nombres distintos en firmas exactas", () => {
+    expect(partyTokenSignature("JOSE PEREZ LOPEZ")).not.toBe(partyTokenSignature("JOSE PEREZ LOPEZ GARCIA"));
   });
 });
 
@@ -99,5 +118,19 @@ describe("FederalPartyExtractor", () => {
     });
     expect(result).toMatchObject([{ side: "quejoso", nameNormalized: "MARIA ELENA RAMIREZ LOPEZ" }]);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("ingestión estructurada Jalisco", () => {
+  it("convierte los campos oficiales actor/demandado en identidades trazables", () => {
+    const result = extractParties({
+      provider: "jalisco-cjj",
+      rawPayload: { act_names: "JOSEFINA FUENTES CORRAL", dem_names: "EMPRESA EJEMPLO, S.A. DE C.V." },
+      officialText: "Se provee escrito.",
+    });
+    expect(result).toMatchObject([
+      { nameNormalized: "JOSEFINA FUENTES CORRAL", side: "plaintiff", extractionMethod: "structured_field", confidence: 0.99 },
+      { searchName: "EMPRESA EJEMPLO", side: "defendant", partyType: "COMPANY", extractionMethod: "structured_field" },
+    ]);
   });
 });

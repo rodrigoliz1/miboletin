@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { findCanonicalParty, type ExistingPartyIdentity } from "./canonicalization";
-import { normalizePartyName, searchablePartyName } from "./normalization";
+import { normalizePartyName, partyTokenSignature, searchablePartyName } from "./normalization";
 import type { PartyCandidate } from "./types";
 
 export interface PartyPersistenceContext {
@@ -51,6 +51,7 @@ export async function persistPartyCandidates(
     const nameNormalized = String(candidate.nameNormalized ?? "").trim() || normalizePartyName(nameRaw);
     const canonicalName = String(candidate.canonicalName ?? "").trim() || nameRaw;
     const searchName = String(candidate.searchName ?? "").trim() || searchablePartyName(nameRaw, partyType);
+    const tokenSignature = String(candidate.tokenSignature ?? "").trim() || partyTokenSignature(nameRaw, partyType);
     if (!nameNormalized || !canonicalName || !searchName) continue;
     const safeCandidate: PartyCandidate = {
       ...candidate,
@@ -58,6 +59,7 @@ export async function persistPartyCandidates(
       nameNormalized,
       canonicalName,
       searchName,
+      tokenSignature,
       partyType,
     };
     metrics.partiesFound += 1;
@@ -66,16 +68,17 @@ export async function persistPartyCandidates(
     if (!identity) {
       const inserted = await sql`
         INSERT INTO case_parties (
-          case_id, name_raw, name_normalized, name_canonical, search_name, side, party_type,
+          case_id, name_raw, name_normalized, name_canonical, search_name, token_signature, side, party_type,
           confidence, extraction_method, parser_version, metadata, updated_at
         ) VALUES (
           ${context.caseId}, ${safeCandidate.nameRaw}, ${safeCandidate.nameNormalized}, ${safeCandidate.canonicalName},
-          ${safeCandidate.searchName}, ${safeCandidate.side}, ${safeCandidate.partyType}, ${safeCandidate.confidence},
+          ${safeCandidate.searchName}, ${safeCandidate.tokenSignature}, ${safeCandidate.side}, ${safeCandidate.partyType}, ${safeCandidate.confidence},
           ${safeCandidate.extractionMethod}, ${context.parserVersion}, ${sql.json(safeCandidate.metadata as never)}, now()
         )
         ON CONFLICT (case_id, name_normalized, side) DO UPDATE SET
           confidence = GREATEST(COALESCE(case_parties.confidence, 0), EXCLUDED.confidence),
           search_name = EXCLUDED.search_name,
+          token_signature = EXCLUDED.token_signature,
           party_type = CASE WHEN case_parties.party_type = 'UNKNOWN' THEN EXCLUDED.party_type ELSE case_parties.party_type END,
           updated_at = now()
         RETURNING id, name_raw, name_normalized, side, party_type, (xmax = 0) AS inserted
@@ -92,11 +95,11 @@ export async function persistPartyCandidates(
     const mentions = await sql`
       INSERT INTO case_party_mentions (
         case_party_id, case_id, publication_id, snapshot_id, provider, name_raw, name_normalized,
-        search_name, role_raw, side, party_type, extraction_method, confidence, source_fragment,
+        search_name, token_signature, role_raw, side, party_type, extraction_method, confidence, source_fragment,
         source_url, publication_date, parser_version, metadata
       ) VALUES (
         ${identity.id}, ${context.caseId}, ${context.publicationId ?? null}, ${context.snapshotId ?? null},
-        ${context.provider}, ${safeCandidate.nameRaw}, ${safeCandidate.nameNormalized}, ${safeCandidate.searchName},
+        ${context.provider}, ${safeCandidate.nameRaw}, ${safeCandidate.nameNormalized}, ${safeCandidate.searchName}, ${safeCandidate.tokenSignature},
         ${safeCandidate.roleRaw ?? null}, ${safeCandidate.side}, ${safeCandidate.partyType}, ${safeCandidate.extractionMethod},
         ${safeCandidate.confidence}, ${fragment(safeCandidate)}, ${context.sourceUrl ?? null},
         ${context.publicationDate ?? null}, ${context.parserVersion}, ${sql.json(safeCandidate.metadata as never)}

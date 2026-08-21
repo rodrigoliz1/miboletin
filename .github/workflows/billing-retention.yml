@@ -28,7 +28,7 @@ jobs:
       BREVO_SENDER_NAME: Mi Boletín Judicial
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 11.12.0
       - uses: actions/setup-node@v5
