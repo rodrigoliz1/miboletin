@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enforceGroundedSessionAnswer, parseAssistantCompletion } from "@/lib/assistant/ai";
+import { enforceGroundedSessionAnswer, groundedOperationalAnswer, parseAssistantCompletion } from "@/lib/assistant/ai";
 
 describe("assistant tool calling", () => {
   it("preserves validated add_monitored_cases calls", () => {
@@ -41,5 +41,28 @@ describe("assistant tool calling", () => {
   it("does not expose an internal sessions array", () => {
     const parsed = parseAssistantCompletion({ choices: [{ message: { content: "Revisé (\"sessions\":[]) y no encontré coincidencias." } }] });
     expect(parsed.content).not.toContain("sessions");
+  });
+
+  it("answers an empty session lookup with the exact monitored period", () => {
+    const answer = groundedOperationalAnswer({
+      requestedPeriod: { from: "2026-08-17", to: "2026-08-21" },
+      sessions: [],
+    }, "session_lookup");
+    expect(answer).toContain("asuntos monitoreados");
+    expect(answer).toContain("17 de agosto de 2026");
+    expect(answer).toContain("21 de agosto de 2026");
+  });
+
+  it("renders publication lookups from verified movement rows", () => {
+    const answer = groundedOperationalAnswer({
+      requestedPeriod: { from: "2026-08-21", to: "2026-08-21" },
+      movements: [{
+        caseNumber: "1580/2025", jurisdiction: "JALISCO", court: "Juzgado Séptimo de lo Mercantil",
+        publicationDate: "2026-08-21", displayDate: "2026-08-21", extract: "Se recibe escrito.",
+      }],
+    }, "publication_list");
+    expect(answer).toContain("**1 resolución publicada**");
+    expect(answer).toContain("**1580/2025**");
+    expect(answer).toContain("Se recibe escrito");
   });
 });

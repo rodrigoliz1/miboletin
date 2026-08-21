@@ -155,6 +155,27 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
     expect(response?.ok(), `${path} debe responder correctamente`).toBeTruthy();
     await expect(page.locator("body")).not.toContainText("Application error");
   }
+  await page.route("**/api/search/parties?**", async (route) => {
+    await route.fulfill({ json: {
+      query: "DESARROLLADORA EJEMPLO", page: 1, pageSize: 20, total: 1,
+      results: [{
+        caseId: "22222222-2222-4222-8222-222222222222", number: "99/2026", caseType: "ORAL MERCANTIL",
+        jurisdiction: "JALISCO", provider: "jalisco-cjj", courtName: "Juzgado Mercantil de Prueba",
+        matchName: "DESARROLLADORA EJEMPLO S.A. DE C.V.", matchRole: "plaintiff", partyType: "COMPANY",
+        score: 0.98, matchKind: "NORMALIZED", publicationCount: 4, lastPublicationDate: "2026-08-18",
+        evidence: { method: "structured_field", confidence: 0.99, direct: true },
+      }],
+    } });
+  });
+  await page.goto("/search/names");
+  await expect(page.getByRole("heading", { name: "Búsqueda por nombre" })).toBeVisible();
+  await page.getByLabel("Nombre de persona o empresa").fill("DESARROLLADORA EJEMPLO");
+  await page.getByRole("button", { name: "Buscar por nombre" }).click();
+  await expect(page.getByRole("heading", { name: "DESARROLLADORA EJEMPLO S.A. DE C.V." })).toBeVisible();
+  await expect(page.getByText("Parte identificada", { exact: true })).toBeVisible();
+  const overflowState = await page.locator("body").evaluate((body) => ({ scrollWidth: body.scrollWidth, clientWidth: body.clientWidth }));
+  expect(overflowState.scrollWidth).toBeLessThanOrEqual(overflowState.clientWidth + 1);
+  await page.unroute("**/api/search/parties?**");
   await page.goto("/search?scope=JALISCO&mode=CASE&q=1511%2F2025&court=M05");
   await page.getByRole("combobox", { name: "Órgano jurisdiccional" }).click();
   await page.getByRole("textbox", { name: /Buscar órgano jurisdiccional/i }).fill("quinto mercantil");

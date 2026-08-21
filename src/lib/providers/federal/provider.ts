@@ -194,6 +194,18 @@ export function parseFederalAgreementHistoryHtml(
   const titleSeparator = title.lastIndexOf(" - ");
   const publishedCaseType = titleSeparator >= 0 ? title.slice(titleSeparator + 3).trim() : undefined;
   if (!federalCaseTypeMatches(params.caseType, publishedCaseType)) return { matched: false, records: [] };
+  const formAction = $("form#form1").attr("action")?.replace(/&amp;/g, "&");
+  if (!formAction) throw new ProviderError("SCHEMA_DRIFT", "La ficha federal no publicó su identidad de expediente y órgano", false);
+  const actionUrl = new URL(formAction, params.sourceUrl);
+  const actionCase = actionUrl.searchParams.get("expediente");
+  const actionCourt = actionUrl.searchParams.get("organismo");
+  let confirmedCase = false;
+  try {
+    confirmedCase = Boolean(actionCase && normalizeCaseNumber(actionCase).normalized === normalizeCaseNumber(params.caseNumber).normalized);
+  } catch { confirmedCase = false; }
+  if (!confirmedCase || actionCourt !== params.courtExternalId) {
+    throw new ProviderError("SCHEMA_DRIFT", "La ficha federal no confirmó el expediente y órgano solicitados", false);
+  }
   const headers = $("#grvAcuerdos tr").first().find("th").map((_, cell) => clean($(cell).text()) ?? "").get();
   const fieldValue = (label: RegExp): string | undefined => {
     let value: string | undefined;

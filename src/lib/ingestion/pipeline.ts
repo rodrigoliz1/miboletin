@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import pino from "pino";
 import type { JudicialSourceProvider, NormalizedPublication, PublicationQuery } from "@/lib/domain/types";
 import { persistPublications, recordIngestionRun } from "@/lib/ingestion/store";
+import { extractParties } from "@/lib/parties/extractor";
 
 const logger = pino({ name: "mi-boletin-ingestion", level: process.env.LOG_LEVEL ?? "info" });
 
@@ -17,6 +18,8 @@ export interface IngestionResult {
   duplicates: number;
   matches: number;
   notifications: number;
+  partiesFound: number;
+  mentionsCreated: number;
   dryRun: boolean;
   normalized: NormalizedPublication[];
   errors: string[];
@@ -53,6 +56,16 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
     let recordsInserted = 0;
     let matches = 0;
     let notifications = 0;
+    let partiesFound = 0;
+    let mentionsCreated = 0;
+    if (dryRun) {
+      partiesFound = normalized.reduce((sum, item) => {
+        const container = item.rawPayload && typeof item.rawPayload === "object" ? item.rawPayload as Record<string, unknown> : {};
+        const rawText = typeof container.rawHtml === "string" ? container.rawHtml : null;
+        const rawPayload = Object.fromEntries(Object.entries(container).filter(([key]) => key !== "rawHtml"));
+        return sum + extractParties({ provider: provider.id, parties: item.parties, rawPayload, rawText, officialText: item.officialText }).length;
+      }, 0);
+    }
     if (!dryRun && normalized.length) {
       if (!process.env.DATABASE_URL) {
         errors.push("STORE_DISABLED: DATABASE_URL no está configurada; no se afirmó ninguna inserción");
@@ -63,6 +76,8 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
           duplicates += persistence.duplicates;
           matches = persistence.matches;
           notifications = persistence.notifications;
+          partiesFound = persistence.partiesFound;
+          mentionsCreated = persistence.mentionsCreated;
         } catch (error) {
           errors.push(`STORE_FAILED: ${error instanceof Error ? error.message : "error desconocido"}`);
         }
@@ -80,6 +95,8 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
       duplicates,
       matches,
       notifications,
+      partiesFound,
+      mentionsCreated,
       dryRun,
       normalized,
       errors,
@@ -103,6 +120,8 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
       duplicates: 0,
       matches: 0,
       notifications: 0,
+      partiesFound: 0,
+      mentionsCreated: 0,
       dryRun,
       normalized,
       errors,

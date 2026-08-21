@@ -1,12 +1,22 @@
 import type { NormalizedPublication } from "@/lib/domain/types";
 import { normalizeName } from "@/lib/domain/normalization";
 import { db } from "@/lib/db/client";
+import { extractParties } from "@/lib/parties/extractor";
+import { PARTY_PARSER_VERSION } from "@/lib/parties/parser";
+import { matchKnownPartiesToWatchRules, persistPartyCandidates } from "@/lib/parties/repository";
+import { linkStjOriginCase } from "@/lib/parties/stj-relations";
+import { recomputePartyDiscoveryStatuses } from "@/lib/parties/discovery";
 
 export interface PersistenceMetrics {
   inserted: number;
   duplicates: number;
   matches: number;
   notifications: number;
+  partiesFound: number;
+  partiesCreated: number;
+  mentionsCreated: number;
+  relationsCreated: number;
+  ambiguousParties: number;
 }
 
 function textValue(value: unknown): string | null {
@@ -16,7 +26,10 @@ function textValue(value: unknown): string | null {
 export async function persistPublications(provider: string, items: NormalizedPublication[]): Promise<PersistenceMetrics> {
   const sql = db();
   return sql.begin(async (tx) => {
-    const metrics: PersistenceMetrics = { inserted: 0, duplicates: 0, matches: 0, notifications: 0 };
+    const metrics: PersistenceMetrics = {
+      inserted: 0, duplicates: 0, matches: 0, notifications: 0,
+      partiesFound: 0, partiesCreated: 0, mentionsCreated: 0, relationsCreated: 0, ambiguousParties: 0,
+    };
     const checkedSnapshotRevisions = new Set<string>();
     const courtsByExternalId = new Map<string, { id: string }>();
     const casesByCanonicalKey = new Map<string, { id: string }>();
@@ -25,6 +38,8 @@ export async function persistPublications(provider: string, items: NormalizedPub
     const pendingMonitoredIds: string[] = [];
     const pendingPublicationIds: string[] = [];
     const pendingDetectedAt: string[] = [];
+    const discoveredCaseIds = new Set<string>();
+    const federalHistoryCandidates = new Map<string, ReturnType<typeof extractParties>>();
     const jurisdiction = provider.startsWith("jalisco") ? "JALISCO" : "FEDERAL";
     const providerName = provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia del Estado de Jalisco" : jurisdiction === "JALISCO" ? "Consejo de la Judicatura del Estado de Jalisco" : "Poder Judicial de la Federación";
     const [authority] = await tx`
@@ -83,6 +98,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
         ` as Array<{ id: string }>;
         casesByCanonicalKey.set(item.canonicalCaseKey, judicialCase);
       }
+      discoveredCaseIds.add(String(judicialCase.id));
       let snapshot = snapshotsByHash.get(item.snapshotHash);
       if (!snapshot) {
         [snapshot] = await tx`
@@ -111,14 +127,15 @@ export async function persistPublications(provider: string, items: NormalizedPub
           ${item.agreementDate ?? null}, ${item.promotionDate ?? null}, ${publicationKind}, ${textValue(federalAgreement?.notebook)},
           ${item.retrievedAt}, ${item.contentHash}, ${item.sourceUrl}
         )
-        ON CONFLICT (court_id, content_hash) DO NOTHING
-        RETURNING id
+        ON CONFLICT (court_id, content_hash) DO UPDATE SET
+          snapshot_id = judicial_publications.snapshot_id
+        RETURNING id, (xmax = 0) AS inserted
       `;
-      if (!publications.length) {
+      if (!publications[0].inserted) {
         metrics.duplicates += 1;
-        continue;
+      } else {
+        metrics.inserted += 1;
       }
-      metrics.inserted += 1;
 
       if (federalRecord) {
         await tx`
@@ -165,15 +182,77 @@ export async function persistPublications(provider: string, items: NormalizedPub
             next_retry_at = CASE WHEN EXCLUDED.sentence_state = 'PENDING_PUBLICATION' THEN LEAST(COALESCE(stj_case_details.next_retry_at, EXCLUDED.next_retry_at), EXCLUDED.next_retry_at) ELSE stj_case_details.next_retry_at END,
             updated_at = now()
         `;
+        try {
+          const relation = await tx.savepoint((relationTx) => linkStjOriginCase(relationTx, String(judicialCase.id), {
+            originCaseNumber: textValue(stjMetadata.originCaseNumber),
+            originCourt: textValue(stjMetadata.originCourt),
+            judicialDistrict: textValue(stjMetadata.judicialDistrict),
+            matter: textValue(stjMetadata.matter),
+          }));
+          if (relation === "CREATED") metrics.relationsCreated += 1;
+        } catch {
+          // Relacionar el toca con su expediente de origen es enriquecimiento opcional.
+          // La publicación confirmada no debe perderse si esta inferencia falla.
+        }
       }
 
-      for (const [side, name] of Object.entries(item.parties ?? {})) {
-        if (!name) continue;
-        await tx`
-          INSERT INTO case_parties (case_id, name_raw, name_normalized, side)
-          VALUES (${judicialCase.id}, ${name}, ${normalizeName(name)}, ${side})
-          ON CONFLICT DO NOTHING
-        `;
+      const partyParserVersion = `${item.parserVersion}|${PARTY_PARSER_VERSION}`;
+      try {
+        const enrichment = await tx.savepoint(async (partyTx) => {
+          let partyCandidates: ReturnType<typeof extractParties>;
+          if (provider === "federal-pjf-session-lists" && federalAgreement && rawText) {
+            let historyCandidates = federalHistoryCandidates.get(item.snapshotHash);
+            if (!historyCandidates) {
+              historyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: "" });
+              federalHistoryCandidates.set(item.snapshotHash, historyCandidates);
+            }
+            partyCandidates = historyCandidates.length
+              ? historyCandidates
+              : extractParties({ provider, rawPayload, rawText: null, officialText: item.officialText });
+          } else {
+            partyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: item.officialText });
+          }
+          const partyMetrics = await persistPartyCandidates(partyTx, {
+            caseId: String(judicialCase.id),
+            publicationId: String(publications[0].id),
+            snapshotId: String(snapshot.id),
+            provider,
+            sourceUrl: item.sourceUrl,
+            publicationDate: item.publicationDate,
+            parserVersion: partyParserVersion,
+          }, partyCandidates);
+          await partyTx`
+            INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found)
+            VALUES (${publications[0].id}, ${partyParserVersion}, ${provider}, ${partyCandidates.length ? "EXTRACTED" : "NO_CANDIDATES"}, ${partyCandidates.length})
+            ON CONFLICT (publication_id, parser_version) DO UPDATE SET
+              status = EXCLUDED.status, candidates_found = EXCLUDED.candidates_found, details = '{}', processed_at = now()
+          `;
+          const notifications = await matchKnownPartiesToWatchRules(partyTx, {
+            caseId: String(judicialCase.id), publicationId: String(publications[0].id), snapshotId: String(snapshot.id),
+            provider, sourceUrl: item.sourceUrl, publicationDate: item.publicationDate, parserVersion: partyParserVersion,
+          });
+          return { partyMetrics, notifications };
+        });
+        const { partyMetrics } = enrichment;
+        metrics.partiesFound += partyMetrics.partiesFound;
+        metrics.partiesCreated += partyMetrics.partiesCreated;
+        metrics.mentionsCreated += partyMetrics.mentionsCreated;
+        metrics.ambiguousParties += partyMetrics.ambiguous;
+        metrics.notifications += enrichment.notifications;
+      } catch (error) {
+        try {
+          await tx.savepoint(async (failureTx) => {
+            await failureTx`
+              INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found, details)
+              VALUES (${publications[0].id}, ${partyParserVersion}, ${provider}, 'FAILED', 0,
+                      ${failureTx.json({ code: "PARTY_PARSER_FAILED", message: error instanceof Error ? error.message.slice(0, 300) : "unknown" })})
+              ON CONFLICT (publication_id, parser_version) DO UPDATE SET
+                status = 'FAILED', details = EXCLUDED.details, processed_at = now()
+            `;
+          });
+        } catch {
+          // La observabilidad del enriquecimiento tampoco debe bloquear el acuerdo.
+        }
       }
 
       const candidateKey = jurisdiction === "FEDERAL" ? judicialCase.id : `${court.id}:${item.caseNumberNormalized}`;
@@ -200,6 +279,24 @@ export async function persistPublications(provider: string, items: NormalizedPub
         pendingPublicationIds.push(String(publications[0].id));
         pendingDetectedAt.push(item.retrievedAt);
       }
+    }
+    if (provider === "jalisco-cjj" && items.length >= 10 && metrics.partiesFound === 0) {
+      await tx`
+        INSERT INTO domain_events (type, aggregate_type, payload)
+        VALUES ('PARTY_EXTRACTION_DEGRADED', 'provider', ${tx.json({
+          provider, recordsProcessed: items.length, partiesFound: 0, parserVersion: PARTY_PARSER_VERSION,
+        })})
+      `;
+    }
+    try {
+      await tx.savepoint((discoveryTx) => recomputePartyDiscoveryStatuses(
+        discoveryTx,
+        [...discoveredCaseIds],
+        provider,
+        `${items[0]?.parserVersion ?? "unknown"}|${PARTY_PARSER_VERSION}`,
+      ));
+    } catch {
+      // El estado del índice por nombre se puede recomputar después; el boletín no.
     }
     if (pendingPublicationIds.length) {
       const movements = await tx`

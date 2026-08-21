@@ -8,6 +8,7 @@ import { getMonitoredCase, linkStoredPublicationsToMonitoredCase, listMonitoredC
 import { dispatchJudicialEmails } from "@/lib/email/notifications";
 import { dateInMexicoCity } from "@/lib/product/query";
 import { randomUUID } from "node:crypto";
+import { recordPartyDiscoveryFailure } from "@/lib/parties/discovery";
 
 export async function refreshMonitoredCase(organizationId: string, monitoredCaseId: string, force = false): Promise<IngestionResult[]> {
   const detail = await getMonitoredCase(organizationId, monitoredCaseId);
@@ -29,6 +30,22 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
         sourceMode: "AGREEMENT",
       });
       results.push(agreement);
+      if (agreement.errors.length) {
+        const invalid = agreement.errors.some((message) => /SCHEMA|INVALID|cambi[oó]|columnas|HTML/i.test(message));
+        await recordPartyDiscoveryFailure({
+          caseId: watched.caseId, provider: watched.provider,
+          status: invalid ? "DETAIL_INVALID" : "SOURCE_FAILED",
+          errorCode: invalid ? "FEDERAL_DETAIL_INVALID" : "FEDERAL_SOURCE_FAILED",
+          message: agreement.errors[0],
+          metadata: { recordsFetched: agreement.recordsFetched },
+        });
+      } else if (agreement.recordsFetched === 0) {
+        await recordPartyDiscoveryFailure({
+          caseId: watched.caseId, provider: watched.provider, status: "DETAIL_UNAVAILABLE",
+          errorCode: "NO_MATCHING_PUBLIC_CASE",
+          message: "La ficha oficial no publicó datos para la combinación exacta de órgano, tipo y expediente.",
+        });
+      }
       await db()`
         INSERT INTO monitored_case_source_checks (monitored_case_id, filter_kind, checked_date, status, records_found, error_message)
         VALUES (${monitoredCaseId}, 'expediente', ${today}, ${agreement.errors.length ? "FAILED" : "SUCCEEDED"}, ${agreement.recordsFetched}, ${agreement.errors[0] ?? null})
@@ -69,11 +86,18 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
     return results;
   } catch (error) {
     const message = error instanceof Error ? error.message : "No fue posible comprobar la fuente";
+    if (detail.case.jurisdiction === "FEDERAL") {
+      await recordPartyDiscoveryFailure({
+        caseId: detail.case.caseId, provider: detail.case.provider, status: "SOURCE_FAILED",
+        errorCode: "FEDERAL_REFRESH_FAILED", message,
+      }).catch(() => undefined);
+    }
     await updateMonitoredSourceStatus(monitoredCaseId, "FAILED", message, false);
     return [{
       jobId: `refresh-failed-${monitoredCaseId}`, provider: watched.provider, startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(), duration: 0, recordsFetched: 0, recordsInserted: 0, recordsUpdated: 0,
-      duplicates: 0, matches: 0, notifications: 0, dryRun: false, normalized: [], errors: [message],
+      duplicates: 0, matches: 0, notifications: 0, partiesFound: 0, mentionsCreated: 0,
+      dryRun: false, normalized: [], errors: [message],
     }];
   }
 }

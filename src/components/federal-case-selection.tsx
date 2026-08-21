@@ -40,7 +40,7 @@ export function FederalCaseSelection({ courts, initialCourt, initialType }: { co
   const courtType = courts.find((court) => court.value === courtId)?.courtType ?? "OTHER";
   const caseTypes = useMemo(() => types[courtType].map((type) => ({ value: type, label: type, group: groupNames[courtType] })), [courtType]);
   return <>
-    <SearchableSelect name="court" label="Órgano jurisdiccional" options={courts} defaultValue={courtId} required searchPlaceholder="Buscar por nombre, materia, ciudad o clave…" hint="El tipo de asunto se ajustará automáticamente al órgano seleccionado." onValueChange={setCourtId} />
+    <SearchableSelect name="court" label="Órgano jurisdiccional" options={courts} defaultValue={courtId} required searchPlaceholder="Buscar por nombre, materia, ciudad o clave…" hint="" onValueChange={setCourtId} />
     <SearchableSelect key={courtType} name="caseType" label="Tipo de asunto" options={caseTypes} defaultValue={initialType && caseTypes.some((type) => type.value === initialType) ? initialType : caseTypes[0]?.value} required searchPlaceholder="Buscar tipo de asunto…" />
   </>;
 }

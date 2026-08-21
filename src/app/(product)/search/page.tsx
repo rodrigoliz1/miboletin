@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Buildings, CaretDown, MagnifyingGlass, Scales } from "@phosphor-icons/react/dist/ssr";
+import { Buildings, CaretDown, MagnifyingGlass, Scales, UserFocus } from "@phosphor-icons/react/dist/ssr";
 import { SearchableSelect } from "@/components/searchable-select";
 import { SearchResultAdd } from "@/components/search-result-add";
 import { FederalCaseSelection, federalCourtTypeNames, type FederalCourtType } from "@/components/federal-case-selection";
@@ -74,7 +74,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   const scope = params.scope === "JALISCO" || params.scope === "STJ" || params.scope === "FEDERAL" ? params.scope : undefined;
   if (!scope) return <div className="content search-hub">
     <div className="page-heading"><div><p className="eyebrow">BÚSQUEDA JUDICIAL</p><h1>¿Dónde deseas buscar?</h1><p>Consulta un expediente directamente en la fuente oficial correspondiente.</p></div></div>
-    <section className="search-scope-grid">
+    <section className="search-scope-grid search-scope-grid-four">
+      <Link href="/search/names"><span className="scope-icon"><UserFocus size={28} weight="duotone" /></span><small>ÍNDICE PROPIO</small><h2>Buscar por nombre</h2><p>Consulta personas y empresas por sus participaciones procesales, variantes publicadas y asuntos relacionados.</p><strong>Entrar a búsqueda</strong></Link>
       <Link href="/search?scope=JALISCO"><span className="scope-icon"><Buildings size={28} weight="duotone" /></span><small>PJE</small><h2>Poder Judicial del Estado de Jalisco</h2><p>Selecciona el órgano y consulta el historial oficial por número de expediente.</p><strong>Entrar a búsqueda</strong></Link>
       <Link href="/search?scope=STJ"><span className="scope-icon"><Scales size={28} weight="duotone" /></span><small>STJ</small><h2>Salas del Supremo Tribunal de Justicia</h2><p>Consulta acuerdos por Sala y Toca, con detección de sentencia.</p><strong>Entrar a búsqueda</strong></Link>
       <Link href="/search?scope=FEDERAL"><span className="scope-icon"><Scales size={28} weight="duotone" /></span><small>PJF</small><h2>Poder Judicial de la Federación</h2><p>Selecciona circuito, órgano y tipo de asunto antes de consultar el expediente.</p><strong>Entrar a búsqueda</strong></Link>
@@ -169,7 +170,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       <button className="button button-primary" type="submit">Buscar</button>
     </form>
 
-    <div className="source-assurance search-coverage-note"><span><strong>Consulta verificable.</strong> Las fuentes oficiales disponibles no ofrecen un índice global y exhaustivo por nombre de parte. Para evitar falsos negativos, Mi Boletín Judicial no presenta como investigación general una búsqueda limitada a datos previamente indexados.</span></div>
+    <div className="source-assurance search-coverage-note"><span><strong>Consulta verificable.</strong> Esta vista consulta directamente la fuente oficial por órgano y expediente. Para investigar participaciones procesales utiliza el índice propio en “Buscar por nombre”.</span></div>
     {params.error && <div className="form-error">No fue posible agregar el resultado. Revisa la selección e inténtalo nuevamente.</div>}
     {error && <section className="search-state danger-notice"><strong>No se pudo completar la consulta.</strong><p>{error}</p><p>Conservamos los datos previos y no los sustituimos con resultados simulados.</p></section>}
     {!error && query && !results.length && <section className="search-state panel"><span className="search-state-number">0</span><div><h2>Sin resultados en la cobertura consultada</h2><p>Revisa los datos o prueba una participación más amplia.</p></div></section>}

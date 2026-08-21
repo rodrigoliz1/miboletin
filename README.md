@@ -20,6 +20,7 @@ No hay expedientes, cuentas ni publicaciones simuladas. Si una fuente falla, se 
 - Correos transaccionales con Brevo y plantillas de marca.
 - Asistente con conversaciones persistidas y contexto aislado por organización/usuario.
 - Workers idempotentes para ingestión, backfill y health checks.
+- Índice judicial propio por nombre, con menciones auditables, normalización y relaciones procesales.
 - Vitest para contratos y Playwright para flujo E2E.
 
 ## Inicio local
@@ -94,6 +95,28 @@ Backfill federal de un órgano o de todos los órganos de un circuito:
 pnpm federal:backfill --from=2026-08-01 --to=2026-08-14 --circuit=3 --court=119 --dry-run
 pnpm federal:backfill --from=2026-08-01 --to=2026-08-14 --circuit=3
 ```
+
+Backfill del índice de partes (en seco por defecto) y aplicación controlada:
+
+```bash
+pnpm parties:backfill -- --provider=jalisco-cjj
+pnpm parties:backfill -- --provider=federal-pjf-session-lists
+pnpm parties:backfill -- --apply
+```
+
+Índice global desacoplado de los expedientes vigilados (en seco por defecto):
+
+```bash
+pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --max-units=25
+pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --apply --max-units=250
+pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --max-units=250
+pnpm index:global -- --provider=federal-pjf-session-lists --from=2026-08-01 --to=2026-08-19 --circuit=3 --apply --max-units=120
+pnpm federal:diagnose -- --case-id=UUID
+```
+
+`judicial_cases` conserva asuntos descubiertos aunque nadie los vigile; las carpetas y `monitored_cases` mantienen la relación privada con el cliente. El job global persiste checkpoints en `global_index_runs`, es idempotente y se ejecuta aparte del monitor de watchlists mediante `.github/workflows/global-index.yml`. Las fechas de cobertura que muestra administración son los extremos presentes en el índice, no una promesa de continuidad mientras el backfill siga incompleto.
+
+La búsqueda por nombre vive en `/search/names`; consulta exclusivamente el índice persistente de PostgreSQL. No depende de que el portal oficial ofrezca una búsqueda remota por persona.
 
 Revisión diaria de todos los órganos que tengan asuntos activos:
 
@@ -171,6 +194,7 @@ pnpm test:e2e
 - [Operación federal](docs/FEDERAL.md)
 - [Integración de Salas del STJ Jalisco](docs/STJ-JALISCO.md)
 - [Operación del Asistente](docs/ASSISTANT-AI.md)
+- [Índice judicial por nombre](docs/PARTY-SEARCH.md)
 - [Correos de continuidad de suscripción](docs/SUBSCRIPTION-RETENTION.md)
 - [Informe de implementación](FEDERAL_IMPLEMENTATION_REPORT.md)
 - [Fuentes oficiales](docs/SOURCES.md)

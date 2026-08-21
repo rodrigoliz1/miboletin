@@ -1,0 +1,63 @@
+name: Índice judicial global
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:30 y 15:30 en Guadalajara (UTC-6). Los backfills históricos se ejecutan aparte.
+    - cron: "30 14,21 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: global-judicial-index-production
+  cancel-in-progress: false
+
+jobs:
+  jalisco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - name: Indexar boletín global de Jalisco
+        run: |
+          INDEX_DATE=$(TZ=America/Mexico_City date +%F)
+          pnpm index:global -- --provider=jalisco-cjj --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --max-units=250
+
+  federal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
+      FEDERAL_SESSION_BASE: https://www.dgej.cjf.gob.mx/SiseInternet
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - name: Continuar índice federal global
+        run: |
+          INDEX_DATE=$(TZ=America/Mexico_City date +%F)
+          pnpm index:global -- --provider=federal-pjf-session-lists --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --max-units=120

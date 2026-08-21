@@ -512,7 +512,7 @@ export async function listMonitoredCases(organizationId: string, folderId?: stri
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
-      FROM case_parties cp WHERE cp.case_id = jc.id
+      FROM case_parties cp WHERE cp.case_id = jc.id AND cp.active
     ) parties ON true
     LEFT JOIN LATERAL (
       SELECT jp.publication_date FROM case_movements lm
@@ -664,23 +664,39 @@ export async function listNotifications(organizationId: string, userId?: string)
   const selectedUserId = optionalUuid(userId);
   const today = dateInMexicoCity();
   return db()`
-    SELECT n.id, n.status, n.subject, n.payload, n.created_at, n.sent_at,
-           jc.case_number_normalized AS case_number, c.name AS court_name, mc.id AS monitored_case_id
-    FROM notifications n
-    JOIN users u ON u.id = n.user_id
-    JOIN memberships m ON m.user_id = u.id AND m.organization_id = ${organizationId}
-    JOIN case_movements cm ON cm.id = n.movement_id
-    JOIN judicial_publications jp ON jp.id = cm.publication_id
-    JOIN monitored_cases mc ON mc.id = cm.monitored_case_id AND mc.organization_id = ${organizationId}
-      AND mc.active AND mc.deleted_at IS NULL
-    JOIN judicial_cases jc ON jc.id = mc.case_id
-    JOIN judicial_authorities ja ON ja.id = jc.authority_id
-    JOIN courts c ON c.id = jc.court_id
-    WHERE n.channel = 'IN_APP'
-      AND (${selectedUserId}::uuid IS NULL OR n.user_id = ${selectedUserId})
-      AND jp.publication_date = ${today}
-      AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
-    ORDER BY n.created_at DESC
+    SELECT alerts.* FROM (
+      SELECT n.id, n.status, n.subject, n.payload, n.created_at, n.sent_at,
+             jc.case_number_normalized AS case_number, c.name AS court_name, mc.id AS monitored_case_id,
+             '/cases/' || mc.id::text AS target_href
+      FROM notifications n
+      JOIN users u ON u.id = n.user_id
+      JOIN memberships m ON m.user_id = u.id AND m.organization_id = ${organizationId}
+      JOIN case_movements cm ON cm.id = n.movement_id
+      JOIN judicial_publications jp ON jp.id = cm.publication_id
+      JOIN monitored_cases mc ON mc.id = cm.monitored_case_id AND mc.organization_id = ${organizationId}
+        AND mc.active AND mc.deleted_at IS NULL
+      JOIN judicial_cases jc ON jc.id = mc.case_id
+      JOIN judicial_authorities ja ON ja.id = jc.authority_id
+      JOIN courts c ON c.id = jc.court_id
+      WHERE n.channel = 'IN_APP'
+        AND (${selectedUserId}::uuid IS NULL OR n.user_id = ${selectedUserId})
+        AND jp.publication_date = ${today}
+        AND (ja.jurisdiction <> 'FEDERAL' OR jp.case_id = mc.case_id)
+      UNION ALL
+      SELECT n.id, n.status, n.subject, n.payload, n.created_at, n.sent_at,
+             jc.case_number_normalized AS case_number, c.name AS court_name, NULL::uuid AS monitored_case_id,
+             '/search/names/' || jc.id::text AS target_href
+      FROM notifications n
+      JOIN memberships m ON m.user_id = n.user_id AND m.organization_id = ${organizationId}
+      JOIN watch_rule_matches wrm ON wrm.id = n.watch_rule_match_id
+      JOIN watch_rules wr ON wr.id = wrm.watch_rule_id AND wr.user_id = n.user_id
+      JOIN judicial_cases jc ON jc.id = wrm.case_id
+      JOIN courts c ON c.id = jc.court_id
+      WHERE n.channel = 'IN_APP'
+        AND (${selectedUserId}::uuid IS NULL OR n.user_id = ${selectedUserId})
+        AND (n.created_at AT TIME ZONE 'America/Mexico_City')::date = ${today}
+    ) alerts
+    ORDER BY alerts.created_at DESC
     LIMIT 100
   `;
 }
@@ -736,7 +752,7 @@ export async function listOrganizationMovements(organizationId: string, from: st
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
-      FROM case_parties cp WHERE cp.case_id = jc.id
+      FROM case_parties cp WHERE cp.case_id = jc.id AND cp.active
     ) parties ON true
     LEFT JOIN LATERAL (
       SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name
@@ -848,6 +864,19 @@ export async function listOperationalRuns() {
   return db()`SELECT * FROM ingestion_runs ORDER BY started_at DESC LIMIT 50`;
 }
 
+export async function partyIndexQuality() {
+  const rows = await db()`
+    SELECT
+      (SELECT count(*)::int FROM case_parties WHERE active) AS parties,
+      (SELECT count(*)::int FROM case_party_mentions) AS mentions,
+      (SELECT count(*)::int FROM case_relations) AS relations,
+      (SELECT count(DISTINCT case_id)::int FROM case_parties WHERE active) AS indexed_cases,
+      (SELECT count(*)::int FROM case_party_mentions WHERE confidence < 0.7) AS ambiguous_mentions,
+      (SELECT count(*)::int FROM party_extraction_runs WHERE status = 'FAILED') AS failed_runs
+  `;
+  return rows[0];
+}
+
 export async function searchJudicialCases(input: {
   organizationId: string;
   query: string;
@@ -876,7 +905,7 @@ export async function searchJudicialCases(input: {
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
-      FROM case_parties cp WHERE cp.case_id = jc.id
+      FROM case_parties cp WHERE cp.case_id = jc.id AND cp.active
     ) parties ON true
     JOIN LATERAL (
       SELECT count(*)::int AS publication_count, max(jp.publication_date) AS last_publication_date
@@ -887,7 +916,7 @@ export async function searchJudicialCases(input: {
         (${input.mode} = 'CASE' AND jc.case_number_normalized = ${normalizedQuery})
         OR (${input.mode} = 'PARTY' AND EXISTS (
           SELECT 1 FROM case_parties searched
-          WHERE searched.case_id = jc.id
+          WHERE searched.case_id = jc.id AND searched.active
             AND (${side}::text IS NULL OR searched.side = ${side})
             AND (searched.name_normalized ILIKE ${`%${normalizedQuery}%`} OR similarity(searched.name_normalized, ${normalizedQuery}) >= 0.35)
         ))

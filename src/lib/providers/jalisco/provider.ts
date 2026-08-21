@@ -93,6 +93,18 @@ function dateOnly(value: string | null | undefined): string | undefined {
   return match?.[0];
 }
 
+export function normalizeJaliscoSourceCaseNumber(value: string) {
+  const compact = value.trim().replace(/\s+/g, "").toUpperCase();
+  // The CJJ sometimes returns a two-digit year, but most rows already contain
+  // four digits. The suffix must start with a separator so `192/2026` cannot
+  // be misread as year `20` plus suffix `26`.
+  const shortYear = compact.match(/^(\d{1,8})[/-](\d{2})((?:[-/][A-Z0-9-]+)?)$/);
+  if (!shortYear) return normalizeCaseNumber(compact);
+  const currentShortYear = Number(new Date().getUTCFullYear().toString().slice(-2));
+  const year = Number(shortYear[2]) <= currentShortYear ? `20${shortYear[2]}` : `19${shortYear[2]}`;
+  return normalizeCaseNumber(`${shortYear[1]}/${year}${shortYear[3]}`);
+}
+
 function courtMatter(name: string, family: JaliscoCourtFamily): string {
   const upper = name.toUpperCase();
   if (family === "LABOR") return "Laboral";
@@ -269,7 +281,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
     const records = await this.records(endpoint, { judged: court.externalId, date: previousJaliscoBusinessDate(query.date) });
     const requested = query.caseNumber ? normalizeCaseNumber(query.caseNumber).normalized : null;
     return records
-      .filter((record) => !requested || normalizeCaseNumber(record.EXP).normalized === requested)
+      .filter((record) => !requested || normalizeJaliscoSourceCaseNumber(record.EXP).normalized === requested)
       .map((record, index) => recordToPublication(record, court, index));
   }
 
@@ -284,7 +296,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
     const records = await this.records(endpoint, { judged: court.externalId, expedient: parsedCase.normalized });
     const publications = records
       .filter((record) => {
-        try { return normalizeCaseNumber(record.EXP).normalized === parsedCase.normalized; } catch { return false; }
+        try { return normalizeJaliscoSourceCaseNumber(record.EXP).normalized === parsedCase.normalized; } catch { return false; }
       })
       .map((record, index) => recordToPublication(record, court, index))
       .sort((a, b) => (b.agreementDate ?? b.publicationDate).localeCompare(a.agreementDate ?? a.publicationDate));
@@ -302,7 +314,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
   }
 
   validate(record: RawPublication): void {
-    normalizeCaseNumber(record.caseNumberRaw);
+    normalizeJaliscoSourceCaseNumber(record.caseNumberRaw);
     if (!record.courtExternalId || !record.officialText || !/^\d{4}-\d{2}-\d{2}$/.test(record.publicationDate)) {
       throw new ProviderError("SCHEMA_DRIFT", "Publicación Jalisco incompleta", false);
     }
@@ -310,7 +322,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
 
   async normalize(record: RawPublication): Promise<NormalizedPublication> {
     this.validate(record);
-    const parsed = normalizeCaseNumber(record.caseNumberRaw);
+    const parsed = normalizeJaliscoSourceCaseNumber(record.caseNumberRaw);
     const retrievedAt = new Date().toISOString();
     const canonicalKey = canonicalCaseKey({
       jurisdiction: "JALISCO",

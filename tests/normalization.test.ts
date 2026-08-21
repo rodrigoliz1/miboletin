@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalCaseKey, normalizeCaseNumber, normalizeName, sha256, stableJson } from "@/lib/domain/normalization";
+import { normalizeJaliscoSourceCaseNumber } from "@/lib/providers/jalisco/provider";
 
 describe("normalizeCaseNumber", () => {
   it.each(["192/2025", "192 / 2025", "00192/2025", "192-2025"])("normaliza %s sin perder número y año", (raw) => {
@@ -9,6 +10,12 @@ describe("normalizeCaseNumber", () => {
     expect(normalizeCaseNumber("335/2005-D-S-A")).toEqual({ normalized: "335/2005-D-S-A", number: 335, year: 2005, suffix: "D-S-A" });
   });
   it("rechaza representaciones sin año de cuatro dígitos", () => expect(() => normalizeCaseNumber("192/25")).toThrow());
+  it("normaliza años históricos abreviados sólo en el adaptador oficial CJJ", () => {
+    expect(normalizeJaliscoSourceCaseNumber("1693/96").normalized).toBe("1693/1996");
+    expect(normalizeJaliscoSourceCaseNumber("192/25").normalized).toBe("192/2025");
+    expect(normalizeJaliscoSourceCaseNumber("192/2025").normalized).toBe("192/2025");
+    expect(normalizeJaliscoSourceCaseNumber("335/2005-D-S-A").normalized).toBe("335/2005-D-S-A");
+  });
 });
 
 describe("normalización canónica", () => {

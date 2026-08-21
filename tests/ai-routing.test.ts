@@ -8,6 +8,8 @@ describe("AI routing", () => {
     expect(determineAiTier({ question })).toBe("fast");
     expect(determineRequestType("¿Qué sesiones tengo próximas?")).toBe("session_lookup");
     expect(determineRequestType("Muéstrame los asuntos listados esta semana")).toBe("session_lookup");
+    expect(determineRequestType("¿Qué salió hoy?")).toBe("publication_list");
+    expect(determineRequestType("¿Qué publicaron ayer?")).toBe("publication_list");
   });
 
   it("uses pro and premium only for materially complex analysis", () => {

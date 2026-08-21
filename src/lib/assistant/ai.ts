@@ -99,6 +99,19 @@ interface SessionAnswerRow {
   sessionDate?: unknown;
   result?: unknown;
   judgment?: unknown;
+  kind?: unknown;
+}
+
+interface PublicationAnswerRow {
+  caseNumber?: unknown;
+  caseType?: unknown;
+  court?: unknown;
+  jurisdiction?: unknown;
+  publicationDate?: unknown;
+  displayDate?: unknown;
+  agreementDate?: unknown;
+  extract?: unknown;
+  carriedForward?: unknown;
 }
 
 function contextRecord(context: unknown): Record<string, unknown> {
@@ -114,32 +127,87 @@ function formatJudicialDate(value: unknown): string {
 function groundedSessionAnswer(context: unknown): string | null {
   const data = contextRecord(context);
   const sessions = Array.isArray(data.sessions) ? data.sessions as SessionAnswerRow[] : [];
-  if (!sessions.length) return null;
-  const unique = [...new Map(sessions.map((row) => [`${row.caseNumber}|${row.court}|${row.sessionDate}`, row])).values()]
-    .sort((a, b) => String(a.sessionDate).localeCompare(String(b.sessionDate)));
   const requestedPeriod = contextRecord(data.requestedPeriod);
   const from = formatJudicialDate(requestedPeriod.from);
   const to = formatJudicialDate(requestedPeriod.to);
+  if (!sessions.length) {
+    return `No encontré asuntos monitoreados listados a sesión entre el **${from}** y el **${to}**. Esta conclusión se limita a tus expedientes vigilados y al periodo indicado.`;
+  }
+  const bySession = new Map<string, SessionAnswerRow>();
+  for (const row of sessions) {
+    const key = `${row.caseNumber}|${row.court}|${row.sessionDate}`;
+    const previous = bySession.get(key);
+    if (!previous || String(row.kind) === "SESSION_RESULT") bySession.set(key, row);
+  }
+  const unique = [...bySession.values()]
+    .sort((a, b) => String(a.sessionDate).localeCompare(String(b.sessionDate)));
   const rows = unique.map((row) => [
     `**${String(row.caseNumber ?? "Sin número")}**`,
     String(row.caseType ?? "No publicado"),
     String(row.court ?? "Órgano no publicado").replace(/\|/g, "\\|"),
     `**${formatJudicialDate(row.sessionDate)}**`,
-    formatJudicialDate(row.listedDate),
+    [
+      String(row.kind) === "SESSION_RESULT" ? "Sesionado" : "Listado",
+      row.result ? String(row.result) : null,
+      row.judgment ? String(row.judgment) : null,
+      `Listado: ${formatJudicialDate(row.listedDate)}`,
+    ].filter(Boolean).join(" · ").replace(/\|/g, "\\|"),
   ].join(" | "));
   return [
     `Tienes **${unique.length} ${unique.length === 1 ? "asunto listado" : "asuntos listados"} a sesión** entre el **${from}** y el **${to}**.`,
     "",
-    "| Expediente | Tipo | Órgano | Fecha de sesión | Fecha de listado |",
+    "| Expediente | Tipo | Órgano | Fecha de sesión | Estado |",
     "| --- | --- | --- | --- | --- |",
     ...rows.map((row) => `| ${row} |`),
   ].join("\n");
 }
 
+function compactCell(value: unknown, limit: number): string {
+  const text = String(value ?? "Sin extracto publicado").replace(/\s+/g, " ").replace(/\|/g, "\\|").trim();
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+function groundedPublicationAnswer(context: unknown): string {
+  const data = contextRecord(context);
+  const movements = Array.isArray(data.movements) ? data.movements as PublicationAnswerRow[] : [];
+  const requestedPeriod = contextRecord(data.requestedPeriod);
+  const from = formatJudicialDate(requestedPeriod.from);
+  const to = formatJudicialDate(requestedPeriod.to);
+  const unique = [...new Map(movements.map((row) => [
+    `${row.caseNumber}|${row.court}|${row.publicationDate}|${row.agreementDate}|${row.extract}`,
+    row,
+  ])).values()];
+  if (!unique.length) {
+    return `No encontré resoluciones publicadas para tus expedientes vigilados entre el **${from}** y el **${to}**. Esta conclusión se limita a la información incorporada hasta esta consulta.`;
+  }
+  const localCount = unique.filter((row) => String(row.jurisdiction) === "JALISCO").length;
+  const federalCount = unique.length - localCount;
+  const rows = unique.slice(0, 60).map((row) => [
+    `**${String(row.caseNumber ?? "Sin número")}**`,
+    String(row.jurisdiction) === "JALISCO" ? "Jalisco" : "Federal",
+    compactCell(row.court, 80),
+    `**${formatJudicialDate(row.displayDate ?? row.publicationDate)}**`,
+    compactCell(row.extract, 180),
+  ].join(" | "));
+  return [
+    `Encontré **${unique.length} ${unique.length === 1 ? "resolución publicada" : "resoluciones publicadas"}** entre el **${from}** y el **${to}**: **${localCount} locales** y **${federalCount} federales**.`,
+    "",
+    "| Expediente | Fuente | Órgano | Publicación | Extracto |",
+    "| --- | --- | --- | --- | --- |",
+    ...rows.map((row) => `| ${row} |`),
+    ...(unique.length > rows.length ? ["", `Se muestran las primeras **${rows.length}** resoluciones de **${unique.length}**.`] : []),
+  ].join("\n");
+}
+
 export function enforceGroundedSessionAnswer(content: string, context: unknown, requestType: string): string {
   if (requestType !== "session_lookup") return content;
-  const contradiction = /\b(?:no\s+(?:se\s+)?(?:registran|registraron|hay|tienes|existen)|sin)\b[^.\n]{0,100}\bsesiones?\b/i.test(content);
-  return contradiction ? groundedSessionAnswer(context) ?? content : content;
+  return groundedSessionAnswer(context) ?? content;
+}
+
+export function groundedOperationalAnswer(context: unknown, requestType: string): string | null {
+  if (requestType === "session_lookup") return groundedSessionAnswer(context);
+  if (requestType === "publication_list") return groundedPublicationAnswer(context);
+  return null;
 }
 
 export function parseAssistantCompletion(response: AiProviderResponse): { content: string; actions?: AddCaseAction[] } {
@@ -176,6 +244,16 @@ export async function answerWithAi(input: {
   context: unknown;
 }) {
   const requestType = determineRequestType(input.question);
+  const grounded = groundedOperationalAnswer(input.context, requestType);
+  if (grounded) {
+    return {
+      content: grounded,
+      model: "mi-boletin-grounded",
+      responseId: `grounded-${createHash("sha256").update(`${input.conversationId}:${input.question}:${JSON.stringify(input.context)}`).digest("hex").slice(0, 24)}`,
+      inputTokens: undefined,
+      outputTokens: undefined,
+    };
+  }
   const tier = determineAiTier({ question: input.question, requestType, ...contextCounts(input.context) });
   const safetyIdentifier = createHash("sha256").update(`${process.env.AUTH_SECRET ?? "mi-boletin"}:${input.userId}`).digest("hex").slice(0, 64);
   const result = await executeAiRequest({

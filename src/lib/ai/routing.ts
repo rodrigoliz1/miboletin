@@ -21,7 +21,7 @@ export function determineRequestType(question: string): AiRequestType {
   if (/\b(listad[oa]s?|sesiones?|sesiono|ponente|sentido)\b/.test(text)) return "session_lookup";
   if (/\b(analiza|interpretacion|implicaciones|estrategia|riesgo procesal|razonamiento juridico)\b/.test(text)) return "legal_analysis";
   if (/\b(resume|resumen|explica|que ocurrio|cronologia)\b/.test(text)) return "summary";
-  if (/\b(publicaciones|resoluciones|acuerdos|autos|boletin)\b/.test(text)) return "publication_list";
+  if (/\b(publicaciones|resoluciones|acuerdos|autos|boletin|salio|salieron|publico|publicaron|publicadas?|publicados?)\b/.test(text)) return "publication_list";
   if (/\b(expediente|asunto|carpeta|organo|juzgado|tribunal|sala)\b/.test(text)) return "case_lookup";
   return "general";
 }

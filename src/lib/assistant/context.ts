@@ -138,7 +138,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       LEFT JOIN LATERAL (
         SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
                string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
-        FROM case_parties cp WHERE cp.case_id = jc.id
+        FROM case_parties cp WHERE cp.case_id = jc.id AND cp.active
       ) parties ON true
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL
@@ -194,7 +194,7 @@ export async function buildAssistantContext(organizationId: string, userId: stri
       LEFT JOIN LATERAL (
         SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'plaintiff') AS plaintiff,
                string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side = 'defendant') AS defendant
-        FROM case_parties cp WHERE cp.case_id = jc.id
+        FROM case_parties cp WHERE cp.case_id = jc.id AND cp.active
       ) parties ON true
       LEFT JOIN LATERAL (SELECT string_agg(f.name, ' · ' ORDER BY f.created_at) AS folder_name FROM monitored_case_folders mcf JOIN case_folders f ON f.id = mcf.folder_id WHERE mcf.monitored_case_id = mc.id) folders ON true
       WHERE mc.organization_id = ${organizationId} AND mc.active AND mc.deleted_at IS NULL

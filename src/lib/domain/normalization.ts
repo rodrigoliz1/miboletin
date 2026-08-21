@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Jurisdiction } from "./types";
+import { normalizePartyName } from "@/lib/parties/normalization";
 
 export function normalizeCaseNumber(value: string): { normalized: string; number: number; year: number; suffix?: string } {
   const cleaned = value.trim().replace(/\s+/g, "").toUpperCase();
@@ -13,13 +14,7 @@ export function normalizeCaseNumber(value: string): { normalized: string; number
 }
 
 export function normalizeName(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9Ñ ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizePartyName(value);
 }
 
 export function canonicalCaseKey(input: {
