@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasActiveProductAccess } from "@/lib/billing/access";
 import { enqueueDeepSearch, getDeepSearchJob, processDeepSearchJob } from "@/lib/parties/deep-search";
@@ -8,6 +8,19 @@ import { getSession } from "@/lib/security/session";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+function continueInBackground(jobId: string) {
+  after(async () => {
+    try {
+      await processDeepSearchJob(jobId, 1);
+    } catch (error) {
+      console.error("Deep judicial search background step failed", {
+        jobId,
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  });
+}
 
 const optionalDate = z.string().refine(isIsoDate, "Fecha inválida").optional();
 const startSchema = z.object({
@@ -37,6 +50,7 @@ export async function POST(request: Request) {
   if (parsed.data.from && parsed.data.to && parsed.data.from > parsed.data.to) return NextResponse.json({ error: "El periodo no es válido" }, { status: 400 });
   try {
     const job = await enqueueDeepSearch({ organizationId: session.organizationId, userId: session.userId, ...parsed.data });
+    if (job.unitsProcessed < job.unitsTotal && !["COMPLETE", "FAILED", "CANCELLED"].includes(job.status)) continueInBackground(job.id);
     return NextResponse.json({ job }, { status: 202, headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible iniciar la búsqueda ampliada" }, { status: 500 });
@@ -51,8 +65,8 @@ export async function PATCH(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Trabajo no válido" }, { status: 400 });
   const owned = await getDeepSearchJob(session.organizationId, parsed.data.jobId);
   if (!owned) return NextResponse.json({ error: "Trabajo no encontrado" }, { status: 404 });
-  const job = await processDeepSearchJob(owned.id, parsed.data.maxUnits);
-  return NextResponse.json({ job }, { headers: { "Cache-Control": "private, no-store" } });
+  if (owned.unitsProcessed < owned.unitsTotal && !["COMPLETE", "FAILED", "CANCELLED"].includes(owned.status)) continueInBackground(owned.id);
+  return NextResponse.json({ job: owned }, { status: 202, headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function GET(request: Request) {

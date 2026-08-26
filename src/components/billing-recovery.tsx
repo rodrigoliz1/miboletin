@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowsClockwise, CheckCircle } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
+import { readApiJson } from "@/lib/client/api-response";
 
 export function BillingRecovery() {
   const router = useRouter();
@@ -13,8 +14,8 @@ export function BillingRecovery() {
     setState("checking");
     try {
       const response = await fetch("/api/billing/reconcile", { method: "POST", headers: { Accept: "application/json" } });
-      const result = await response.json() as { ok?: boolean; active?: boolean };
-      if (response.ok && result.ok && result.active) {
+      const result = await readApiJson<{ ok?: boolean; active?: boolean }>(response, "No fue posible comprobar el pago");
+      if (result.ok && result.active) {
         router.replace("/dashboard?subscription=active");
         router.refresh();
         return;

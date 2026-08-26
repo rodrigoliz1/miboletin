@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { readApiJson } from "@/lib/client/api-response";
 import { resilientFetch } from "@/lib/client/resilient-fetch";
 
 type RefreshPhase = "starting" | "checking" | "continuing" | "done" | "error";
@@ -51,8 +52,8 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
           body: JSON.stringify({ caseId, force: forceRequest, automatic: !caseId }),
           signal: controller.signal,
         }, 2);
-        const payload = await response.json() as { ok?: boolean; error?: string };
-        if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible actualizar las fuentes");
+        const payload = await readApiJson<{ ok?: boolean }>(response, "No fue posible actualizar las fuentes");
+        if (!payload.ok) throw new Error("No fue posible actualizar las fuentes");
         window.localStorage.setItem(storageKey, String(Date.now()));
       }
     };
@@ -67,8 +68,8 @@ export function SourceAutoRefresh({ caseId, force = false }: { caseId?: string; 
           cache: "no-store",
           signal: controller.signal,
         }, 3);
-        const payload = await response.json() as { ok?: boolean; error?: string; sourceStatus?: string; movementCount?: number };
-        if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible conocer el avance de la revisión");
+        const payload = await readApiJson<{ ok?: boolean; sourceStatus?: string; movementCount?: number }>(response, "No fue posible conocer el avance de la revisión");
+        if (!payload.ok) throw new Error("No fue posible conocer el avance de la revisión");
         if (typeof payload.movementCount === "number") {
           if ((lastMovementCount.current === null && payload.movementCount > 0) || (lastMovementCount.current !== null && payload.movementCount > lastMovementCount.current)) router.refresh();
           lastMovementCount.current = payload.movementCount;

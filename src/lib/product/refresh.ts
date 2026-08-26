@@ -97,7 +97,7 @@ export async function refreshMonitoredCase(organizationId: string, monitoredCase
       jobId: `refresh-failed-${monitoredCaseId}`, provider: watched.provider, startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(), duration: 0, recordsFetched: 0, recordsInserted: 0, recordsUpdated: 0,
       duplicates: 0, matches: 0, notifications: 0, partiesFound: 0, mentionsCreated: 0,
-      dryRun: false, normalized: [], errors: [message],
+      dryRun: false, normalized: [], errors: [message], warnings: [],
     }];
   }
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import { ArrowClockwise, ArrowRight, BellRinging, Buildings, DownloadSimple, MagnifyingGlass, ShieldCheck, UserFocus, Warning } from "@phosphor-icons/react";
+import { readApiJson } from "@/lib/client/api-response";
 
 type SearchResult = {
   caseId: string; monitoredCaseId?: string; number: string; caseType: string; jurisdiction: "JALISCO" | "FEDERAL";
@@ -59,6 +60,28 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
   const [deepJob, setDeepJob] = useState<DeepJob | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const deepStartedFor = useRef("");
+  const activeDeepJob = useRef("");
+  const activeSearch = useRef(0);
+
+  const pollDeepSearch = useCallback(async (jobId: string, initialUnitsProcessed: number) => {
+    activeDeepJob.current = jobId;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+      if (activeDeepJob.current !== jobId) return;
+      try {
+        const request = await fetch(`/api/search/parties/deep?id=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const payload = await readApiJson<{ job?: DeepJob }>(request, "No fue posible comprobar el avance de la búsqueda");
+        if (!payload.job || activeDeepJob.current !== jobId) return;
+        setDeepJob(payload.job);
+        if (["COMPLETE", "FAILED", "CANCELLED"].includes(payload.job.status)) return;
+        if (payload.job.status === "PARTIAL" && payload.job.unitsProcessed > initialUnitsProcessed) return;
+      } catch {
+        // El trabajo continúa en el servidor; una interrupción del sondeo no
+        // debe borrar sus resultados ni sustituirlos por un error de red crudo.
+        return;
+      }
+    }
+  }, []);
 
   const deepPayload = useCallback((currentResults: number) => ({
     query: query.trim(), currentResults,
@@ -66,25 +89,27 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
     ...(from ? { from } : {}), ...(to ? { to } : {}),
   }), [from, jurisdiction, provider, query, to]);
 
-  const startDeepSearch = useCallback(async (currentResults: number) => {
+  const startDeepSearch = useCallback(async (currentResults: number, searchId = activeSearch.current) => {
+    if (searchId !== activeSearch.current) return;
     setDeepLoading(true);
     try {
       const request = await fetch("/api/search/parties/deep", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(deepPayload(currentResults)) });
-      const payload = await request.json() as { job?: DeepJob; error?: string };
-      if (!request.ok || !payload.job) throw new Error(payload.error ?? "No fue posible ampliar la búsqueda");
+      const payload = await readApiJson<{ job?: DeepJob }>(request, "No fue posible ampliar la búsqueda");
+      if (searchId !== activeSearch.current) return;
+      if (!payload.job) throw new Error("No fue posible iniciar la búsqueda ampliada");
       setDeepJob(payload.job);
-      if (payload.job.unitsTotal > payload.job.unitsProcessed && payload.job.status !== "COMPLETE") {
-        const step = await fetch("/api/search/parties/deep", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: payload.job.id, maxUnits: 2 }) });
-        const stepped = await step.json() as { job?: DeepJob };
-        if (stepped.job) setDeepJob(stepped.job);
-      }
+      if (payload.job.unitsTotal > payload.job.unitsProcessed && payload.job.status !== "COMPLETE") void pollDeepSearch(payload.job.id, payload.job.unitsProcessed);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No fue posible ampliar la búsqueda");
-    } finally { setDeepLoading(false); }
-  }, [deepPayload]);
+      if (searchId === activeSearch.current) setError(cause instanceof Error ? cause.message : "No fue posible ampliar la búsqueda");
+    } finally {
+      if (searchId === activeSearch.current) setDeepLoading(false);
+    }
+  }, [deepPayload, pollDeepSearch]);
 
   const runSearch = useCallback(async (page = 1) => {
     if (query.trim().length < 2) { setError("Escribe al menos dos caracteres del nombre."); return; }
+    const searchId = ++activeSearch.current;
+    activeDeepJob.current = "";
     setLoading(true); setError("");
     const params = new URLSearchParams({ q: query.trim(), page: String(page), pageSize: "20" });
     if (jurisdiction) params.set("jurisdiction", jurisdiction);
@@ -97,29 +122,34 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
     if (resultType) params.set("resultType", resultType);
     try {
       const request = await fetch(`/api/search/parties?${params}`, { credentials: "same-origin", cache: "no-store" });
-      const payload = await request.json() as SearchResponse & { error?: string };
-      if (!request.ok) throw new Error(payload.error ?? "No fue posible completar la búsqueda");
+      const payload = await readApiJson<SearchResponse>(request, "No fue posible completar la búsqueda");
+      if (searchId !== activeSearch.current) return;
       setResponse(payload);
       const deepKey = JSON.stringify(deepPayload(payload.total));
       if (payload.total === 0 && !payload.coverageComplete && deepStartedFor.current !== deepKey) {
         deepStartedFor.current = deepKey;
-        void startDeepSearch(0);
+        void startDeepSearch(0, searchId);
       }
       window.history.replaceState(null, "", `/search/names?q=${encodeURIComponent(query.trim())}`);
     } catch (cause) {
-      setResponse(null); setError(cause instanceof Error ? cause.message : "No fue posible completar la búsqueda");
-    } finally { setLoading(false); }
+      if (searchId === activeSearch.current) {
+        setResponse(null);
+        setError(cause instanceof Error ? cause.message : "No fue posible completar la búsqueda");
+      }
+    } finally {
+      if (searchId === activeSearch.current) setLoading(false);
+    }
   }, [deepPayload, from, jurisdiction, matter, partyType, provider, query, resultType, role, startDeepSearch, to]);
 
   async function continueDeepSearch() {
     if (!deepJob) return;
     setDeepLoading(true); setError("");
     try {
-      const request = await fetch("/api/search/parties/deep", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: deepJob.id, maxUnits: 3 }) });
-      const payload = await request.json() as { job?: DeepJob; error?: string };
-      if (!request.ok || !payload.job) throw new Error(payload.error ?? "La búsqueda continuará en segundo plano");
+      const request = await fetch("/api/search/parties/deep", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: deepJob.id, maxUnits: 1 }) });
+      const payload = await readApiJson<{ job?: DeepJob }>(request, "La búsqueda continuará en segundo plano");
+      if (!payload.job) throw new Error("La búsqueda continuará en segundo plano");
       setDeepJob(payload.job);
-      if (payload.job.resultsAfter > (response?.total ?? 0)) await runSearch(1);
+      void pollDeepSearch(payload.job.id, payload.job.unitsProcessed);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "La búsqueda continuará en segundo plano"); }
     finally { setDeepLoading(false); }
   }
@@ -176,7 +206,7 @@ export function PartySearchWorkspace({ initialQuery = "" }: { initialQuery?: str
     {error && <section className="search-state danger-notice" role="alert"><Warning size={22} /><div><strong>No se pudo completar la consulta.</strong><p>{error}</p></div></section>}
     {!loading && response && <>
       <section className="party-search-summary" aria-live="polite"><div><strong>{response.total}</strong><span>{response.total === 1 ? "asunto localizado" : "asuntos localizados"}</span></div>{response.total > 0 && <div className="party-report-actions"><a className="button button-secondary button-small" href={`/api/reports/search?${reportParams}&detail=simple`}><DownloadSimple size={14} /> Informe simple</a><a className="button button-secondary button-small" href={`/api/reports/search?${reportParams}&detail=rigorous`}><DownloadSimple size={14} /> Informe riguroso</a></div>}</section>
-      {!response.results.length ? <section className="panel party-search-empty"><UserFocus size={28} /><h2>{response.coverageComplete ? "No se localizaron coincidencias en el periodo revisado." : "Sin coincidencias en el índice disponible."}</h2><p>{response.coverageComplete ? "Las unidades seleccionadas fueron procesadas sin encontrar ese nombre." : "La plataforma está ampliando la revisión donde la fuente permite enumerar publicaciones. Un cero provisional no acredita que el asunto no exista."}</p>{deepJob && <div className="party-deep-status"><div><strong>{deepJob.unitsProcessed >= deepJob.unitsTotal ? deepJob.unitsFailed ? "Revisión parcial concluida" : "Revisión ampliada concluida" : "Ampliando búsqueda en fuentes judiciales"}</strong><span>{deepJob.unitsProcessed.toLocaleString("es-MX")} de {deepJob.unitsTotal.toLocaleString("es-MX")} unidades revisadas · {deepJob.resultsAfter} coincidencias indexadas</span></div>{deepJob.unitsProcessed < deepJob.unitsTotal && deepJob.unitsTotal > 0 && <button className="button button-secondary button-small" type="button" onClick={() => void continueDeepSearch()} disabled={deepLoading}><ArrowClockwise size={14} /> {deepLoading ? "Revisando…" : "Continuar ahora"}</button>}{deepJob.details.limitations?.map((item) => <small key={item}>{item}</small>)}</div>}</section> : <div className="party-search-results">{response.results.map((result) => <article className="party-result-card" key={result.caseId}>
+      {!response.results.length ? <section className="panel party-search-empty"><UserFocus size={28} /><h2>{response.coverageComplete ? "No se localizaron coincidencias en el periodo revisado." : "Sin coincidencias en el índice disponible."}</h2><p>{response.coverageComplete ? "Las unidades seleccionadas fueron procesadas sin encontrar ese nombre." : "La plataforma está ampliando la revisión donde la fuente permite enumerar publicaciones. Un cero provisional no acredita que el asunto no exista."}</p>{deepJob && <div className="party-deep-status"><div><strong>{deepJob.unitsProcessed >= deepJob.unitsTotal ? deepJob.unitsFailed ? "Revisión parcial concluida" : "Revisión ampliada concluida" : "Ampliando búsqueda en fuentes judiciales"}</strong><span>{deepJob.unitsProcessed.toLocaleString("es-MX")} de {deepJob.unitsTotal.toLocaleString("es-MX")} unidades revisadas · {deepJob.resultsAfter} coincidencias indexadas</span></div>{deepJob.resultsAfter > response.total && <button className="button button-primary button-small" type="button" onClick={() => void runSearch(1)}>Ver coincidencias encontradas</button>}{deepJob.unitsProcessed < deepJob.unitsTotal && deepJob.unitsTotal > 0 && <button className="button button-secondary button-small" type="button" onClick={() => void continueDeepSearch()} disabled={deepLoading}><ArrowClockwise size={14} /> {deepLoading ? "Revisando…" : "Continuar ahora"}</button>}{deepJob.details.limitations?.map((item) => <small key={item}>{item}</small>)}</div>}</section> : <div className="party-search-results">{response.results.map((result) => <article className="party-result-card" key={result.caseId}>
         <header><div><span className={`party-match-kind ${result.matchKind === "RELATED" ? "is-related" : ""}`}>{matchLabel(result)}</span><h2>{result.matchName}</h2><p>{roleLabels[result.matchRole] ?? result.matchRole} · {result.partyType === "COMPANY" ? "Persona moral" : result.partyType === "PERSON" ? "Persona física" : result.partyType === "AUTHORITY" ? "Autoridad" : "Tipo no determinado"}</p></div></header>
         <div className="party-result-case"><div><small>EXPEDIENTE</small><strong>{result.number}</strong><span>{result.caseType}</span></div><div><small>ÓRGANO JURISDICCIONAL</small><strong>{result.courtName}</strong><span>{result.jurisdiction === "JALISCO" ? "Poder Judicial de Jalisco" : "Poder Judicial de la Federación"}</span></div><div><small>PUBLICACIONES</small><strong>{result.publicationCount}</strong><span>Última: {humanDate(result.lastPublicationDate)}</span></div></div>
         {result.matchKind === "RELATED" && <p className="party-related-note"><ShieldCheck size={16} /> El nombre fue publicado en el expediente de origen y este asunto se muestra por una relación procesal verificada. No se afirma que la Sala haya publicado directamente el nombre.</p>}

@@ -293,7 +293,7 @@ async function main() {
           WHERE job_id = ${jobId}
         `;
       }
-      console.log(JSON.stringify({ unit: cursor, provider, court: unit.courtExternalId, circuit: unit.circuitId, date: unit.date, mode: unit.sourceMode ?? "PUBLICATIONS", fetched: result.recordsFetched, inserted: result.recordsInserted, partiesFound: result.partiesFound, errors: result.errors.length }));
+      console.log(JSON.stringify({ unit: cursor, provider, court: unit.courtExternalId, circuit: unit.circuitId, date: unit.date, mode: unit.sourceMode ?? "PUBLICATIONS", fetched: result.recordsFetched, inserted: result.recordsInserted, partiesFound: result.partiesFound, errors: result.errors.length, warnings: result.warnings.length }));
       if (consecutiveSourceFailures >= maxConsecutiveFailures) {
         hasMore = true;
         stopReason = "SOURCE_CIRCUIT_OPEN";

@@ -227,7 +227,7 @@ export async function processDeepSearchJob(jobId: string, maxUnits = 3): Promise
 export async function processPendingDeepSearchJobs(options: { jobs?: number; unitsPerJob?: number } = {}) {
   const jobs = await db()`
     SELECT id FROM judicial_deep_search_jobs
-    WHERE status IN ('PENDING','PARTIAL') AND completed_at IS NULL AND (lease_until IS NULL OR lease_until < now())
+    WHERE status IN ('PENDING','PARTIAL','RUNNING') AND completed_at IS NULL AND (lease_until IS NULL OR lease_until < now())
     ORDER BY created_at
     LIMIT ${Math.min(10, Math.max(1, options.jobs ?? 2))}
   `;

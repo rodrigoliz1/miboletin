@@ -3,6 +3,7 @@
 import { Trash, X } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { readApiJson } from "@/lib/client/api-response";
 
 export function CaseDeleteButton({ caseId, caseNumber }: { caseId: string; caseNumber: string }) {
   const router = useRouter();
@@ -16,8 +17,8 @@ export function CaseDeleteButton({ caseId, caseNumber }: { caseId: string; caseN
     window.dispatchEvent(new CustomEvent("mi-boletin:case-removing", { detail: { caseId } }));
     try {
       const response = await fetch(`/api/cases/${caseId}`, { method: "DELETE", headers: { Accept: "application/json" } });
-      const payload = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible eliminar el asunto");
+      const payload = await readApiJson<{ ok?: boolean }>(response, "No fue posible eliminar el asunto");
+      if (!payload.ok) throw new Error("No fue posible eliminar el asunto");
       router.push("/cases?removed=1");
       router.refresh();
     } catch (reason) {

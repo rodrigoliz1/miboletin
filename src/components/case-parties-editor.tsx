@@ -3,6 +3,7 @@
 import { PencilSimple, X } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { readApiJson } from "@/lib/client/api-response";
 import { resilientFetch } from "@/lib/client/resilient-fetch";
 
 export function CasePartiesEditor({
@@ -37,8 +38,8 @@ export function CasePartiesEditor({
           defendant: String(formData.get("defendant") ?? ""),
         }),
       });
-      const payload = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible guardar las partes");
+      const payload = await readApiJson<{ ok?: boolean }>(response, "No fue posible guardar las partes");
+      if (!payload.ok) throw new Error("No fue posible guardar las partes");
       setEditing(false);
       router.refresh();
     } catch (reason) {

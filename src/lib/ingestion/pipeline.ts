@@ -23,6 +23,7 @@ export interface IngestionResult {
   dryRun: boolean;
   normalized: NormalizedPublication[];
   errors: string[];
+  warnings: string[];
 }
 
 const observedHashes = new Set<string>();
@@ -32,6 +33,7 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const errors: string[] = [];
+  const warnings: string[] = [];
   const normalized: NormalizedPublication[] = [];
   let duplicates = 0;
 
@@ -49,10 +51,12 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
           if (!dryRun) observedHashes.add(item.contentHash);
         }
       } catch (error) {
-        errors.push(error instanceof Error ? error.message : "Registro inválido");
+        warnings.push(error instanceof Error ? error.message : "Registro oficial inválido");
       }
     }
-    if (raw.length > 0 && normalized.length === 0 && duplicates === 0) errors.push("PARSER_DEGRADED: la fuente respondió, pero ningún registro superó la validación");
+    if (raw.length > 0 && normalized.length === 0 && duplicates === 0) {
+      errors.push("PARSER_DEGRADED: la fuente respondió, pero ningún registro superó la validación");
+    }
     let recordsInserted = 0;
     let matches = 0;
     let notifications = 0;
@@ -100,6 +104,7 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
       dryRun,
       normalized,
       errors,
+      warnings,
     };
     if (!dryRun && process.env.DATABASE_URL) {
       try { await recordIngestionRun({ ...result, lastSnapshotHash: normalized.at(-1)?.snapshotHash }); } catch (error) { logger.error({ error }, "ingestion_run_audit_failed"); }
@@ -125,6 +130,7 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
       dryRun,
       normalized,
       errors,
+      warnings,
     };
     if (!dryRun && process.env.DATABASE_URL) {
       try { await recordIngestionRun(result); } catch (auditError) { logger.error({ error: auditError }, "ingestion_run_failure_audit_failed"); }

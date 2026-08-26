@@ -71,6 +71,13 @@ function errorCode(result: IngestionResult): string | null {
   return first.split(":", 1)[0].replace(/[^A-Z0-9_-]/gi, "_").slice(0, 80).toUpperCase();
 }
 
+export function shouldFlagZeroPartyExtraction(
+  provider: string,
+  result: Pick<IngestionResult, "recordsInserted" | "partiesFound">,
+): boolean {
+  return provider === "jalisco-cjj" && result.recordsInserted >= 10 && result.partiesFound === 0;
+}
+
 export async function recordCoverageUnit(input: CoverageUnitInput): Promise<void> {
   const sql = db();
   const uniqueCases = new Set(input.result.normalized.map((item) => item.canonicalCaseKey)).size;
@@ -91,7 +98,11 @@ export async function recordCoverageUnit(input: CoverageUnitInput): Promise<void
       ${input.result.recordsFetched}, ${uniqueCases}, ${input.result.partiesFound}, 1,
       now(), now(), ${hasErrors ? new Date(Date.now() + 30 * 60_000).toISOString() : null},
       ${code}, ${input.result.errors[0]?.slice(0, 500) ?? null},
-      ${sql.json({ ...(input.metadata ?? {}), jobId: input.result.jobId, durationMs: input.result.duration })}, now()
+      ${sql.json({
+        ...(input.metadata ?? {}), jobId: input.result.jobId, durationMs: input.result.duration,
+        warningCount: input.result.warnings.length,
+        warnings: input.result.warnings.slice(0, 10),
+      })}, now()
     )
     ON CONFLICT (provider, court_external_id, parent_external_id, coverage_date, resource_kind) DO UPDATE SET
       status = EXCLUDED.status,
@@ -111,7 +122,28 @@ export async function recordCoverageUnit(input: CoverageUnitInput): Promise<void
       updated_at = now()
   `;
 
-  if (input.result.recordsFetched >= 10 && input.result.partiesFound === 0 && input.provider === "jalisco-cjj") {
+  if (input.result.warnings.length) {
+    await sql`
+      INSERT INTO judicial_index_anomalies (
+        provider, court_external_id, coverage_date, kind, severity, message,
+        observed_value, expected_value, metadata
+      ) VALUES (
+        ${input.provider}, ${input.courtExternalId}, ${input.date}, 'MALFORMED_SOURCE_RECORD', 'WARNING',
+        ${`${input.result.warnings.length} registro(s) oficial(es) se omitieron por contener datos inválidos; el resto de la unidad se conservó.`},
+        ${input.result.warnings.length}, ${input.result.recordsFetched},
+        ${sql.json({ jobId: input.result.jobId, warnings: input.result.warnings.slice(0, 10) })}
+      ) ON CONFLICT DO NOTHING
+    `;
+  } else {
+    await sql`
+      UPDATE judicial_index_anomalies
+      SET status = 'RESOLVED', resolved_at = now()
+      WHERE provider = ${input.provider} AND court_external_id = ${input.courtExternalId}
+        AND coverage_date = ${input.date} AND kind = 'MALFORMED_SOURCE_RECORD' AND status = 'OPEN'
+    `;
+  }
+
+  if (shouldFlagZeroPartyExtraction(input.provider, input.result)) {
     await sql`
       INSERT INTO judicial_index_anomalies (
         provider, court_external_id, coverage_date, kind, severity, message, observed_value, expected_value, metadata

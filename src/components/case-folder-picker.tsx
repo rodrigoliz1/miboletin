@@ -2,6 +2,7 @@
 
 import { Check, FolderOpen, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
+import { readApiJson } from "@/lib/client/api-response";
 import { resilientFetch } from "@/lib/client/resilient-fetch";
 
 export type FolderPickerFolder = { id: string; name: string; caseCount: number };
@@ -48,8 +49,8 @@ export function FolderPickerDialog({
         headers: { Accept: "application/json", "Content-Type": "application/json" },
         body: JSON.stringify({ folderIds: selected }),
       });
-      const payload = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible guardar las carpetas");
+      const payload = await readApiJson<{ ok?: boolean }>(response, "No fue posible guardar las carpetas");
+      if (!payload.ok) throw new Error("No fue posible guardar las carpetas");
       onClose();
       window.location.reload();
     } catch (reason) {

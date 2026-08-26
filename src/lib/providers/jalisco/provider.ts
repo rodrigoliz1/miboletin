@@ -12,6 +12,7 @@ import {
 import { respectfulFetch } from "@/lib/providers/http";
 
 const envelopeSchema = z.object({ success: z.union([z.number(), z.string()]), data: z.unknown() });
+const sourceErrorSchema = z.object({ code: z.string().min(1), message: z.string().optional() }).passthrough();
 const judgeSchema = z.object({
   value: z.string().min(1),
   name: z.string().min(3),
@@ -40,6 +41,23 @@ const publicationSchema = z.object({
   aut_names: z.string().nullish(),
   pro_names: z.string().nullish(),
 }).passthrough();
+
+export function parseJaliscoPublicationData(data: unknown, endpoint: string): z.infer<typeof publicationSchema>[] {
+  const parsed = z.array(publicationSchema).safeParse(data);
+  if (parsed.success) return parsed.data;
+
+  const sourceError = sourceErrorSchema.safeParse(data);
+  if (sourceError.success && sourceError.data.code === "ER_NO_SUCH_TABLE") {
+    // El catálogo oficial incluye órganos cuya tabla de boletín todavía no ha
+    // sido provisionada. En ese caso el API no contiene publicaciones que
+    // ingerir; no es un cambio de contrato ni una caída de toda la fuente.
+    return [];
+  }
+  if (sourceError.success) {
+    throw new ProviderError("SOURCE_UNAVAILABLE", `La consulta ${endpoint} no está disponible (${sourceError.data.code})`, true);
+  }
+  throw new ProviderError("SCHEMA_DRIFT", `La consulta ${endpoint} cambió de estructura`, false);
+}
 
 export type JaliscoCourtFamily = "METROPOLITAN" | "FOREIGN" | "LABOR" | "TRADITIONAL_CRIMINAL" | "ORAL_CRIMINAL";
 
@@ -281,9 +299,7 @@ export class JaliscoProvider implements JudicialSourceProvider {
     const response = await respectfulFetch(`${this.base}/bulletin/${endpoint}?${params}`);
     if (!response.ok) throw new ProviderError("SOURCE_UNAVAILABLE", `Boletín Jalisco HTTP ${response.status}`, true);
     const body = envelopeSchema.parse(await response.json());
-    const parsed = z.array(publicationSchema).safeParse(body.data);
-    if (!parsed.success) throw new ProviderError("SCHEMA_DRIFT", `La consulta ${endpoint} cambió de estructura`, false);
-    return parsed.data;
+    return parseJaliscoPublicationData(body.data, endpoint);
   }
 
   async fetchPublications(query: PublicationQuery): Promise<RawPublication[]> {

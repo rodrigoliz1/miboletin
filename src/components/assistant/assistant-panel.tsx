@@ -12,6 +12,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type { AssistantConversation, AssistantMessage } from "@/lib/assistant/types";
+import { readApiJson } from "@/lib/client/api-response";
 import { resilientFetch } from "@/lib/client/resilient-fetch";
 import { AssistantMarkdown } from "@/components/assistant/assistant-markdown";
 
@@ -36,8 +37,8 @@ const suggestions = [
 async function api(url: string, init?: RequestInit): Promise<ApiResult> {
   const method = init?.method?.toUpperCase() ?? "GET";
   const response = method === "GET" ? await resilientFetch(url, { cache: "no-store", ...init }, 3) : await fetch(url, { cache: "no-store", ...init });
-  const payload = await response.json().catch(() => ({ ok: false, error: "Respuesta no válida del servidor" })) as ApiResult;
-  if (!response.ok || !payload.ok) throw new Error(payload.error ?? "No fue posible completar la solicitud");
+  const payload = await readApiJson<ApiResult>(response, "No fue posible completar la solicitud");
+  if (!payload.ok) throw new Error(payload.error ?? "No fue posible completar la solicitud");
   return payload;
 }
 
