@@ -57,9 +57,9 @@ pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --
 pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --max-units=250
 ```
 
-`--resume=latest` sólo reanuda una corrida incompleta que coincida exactamente con proveedor, rango, órgano y circuito solicitados. Así, una corrida histórica pendiente nunca secuestra la indexación del día actual.
+`--resume=latest` sólo reanuda una corrida incompleta que coincida exactamente con proveedor, rango, órgano, circuito y segmento solicitados. Así, una corrida histórica pendiente nunca secuestra la indexación del día actual. `--shard=1/4` divide de forma determinista el catálogo para ejecutar segmentos independientes; `--max-minutes` deja un margen seguro antes del límite del runner y `--max-consecutive-failures` abre el cortacircuitos cuando la fuente está caída. Las unidades con cobertura `COMPLETE` se omiten automáticamente; `--force-covered` permite reprocesarlas de manera explícita.
 
-El proceso CJJ recorre fecha y órgano del catálogo oficial, conserva `EXP`, resolución y `act_names`/`dem_names`. El federal recorre calendarios y listas públicas por circuito, órgano, fecha y modalidad, conservando `complainant`/`authority`. Ambos son idempotentes, escriben un cursor en `global_index_runs` y pueden limitarse por `--court`, `--circuit` y `--max-units`. El workflow `.github/workflows/global-index.yml` ejecuta el índice cotidiano separado de la vigilancia de clientes; el backfill histórico se opera manualmente por lotes.
+El proceso CJJ recorre fecha y órgano del catálogo oficial, conserva `EXP`, resolución y `act_names`/`dem_names`. El federal recorre calendarios y listas públicas por circuito, órgano, fecha y modalidad, conservando `complainant`/`authority`. Ambos son idempotentes, escriben un cursor en `global_index_runs` y pueden limitarse por `--court`, `--circuit`, `--shard`, `--max-units` y `--max-minutes`. El workflow `.github/workflows/global-index.yml` ejecuta el índice cotidiano separado de la vigilancia de clientes; el backfill histórico se opera manualmente por lotes.
 
 ## Backfill de extracción
 

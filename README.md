@@ -110,6 +110,7 @@ pnpm parties:backfill -- --apply
 pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --max-units=25
 pnpm index:global -- --provider=jalisco-cjj --from=2026-08-01 --to=2026-08-19 --apply --max-units=250
 pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --max-units=250
+pnpm index:global -- --provider=jalisco-cjj --apply --resume=latest --shard=1/4 --max-units=60 --max-minutes=85
 pnpm index:global -- --provider=federal-pjf-session-lists --from=2026-08-01 --to=2026-08-19 --circuit=3 --apply --max-units=120
 pnpm federal:diagnose -- --case-id=UUID
 pnpm judicial:catalogs:sync

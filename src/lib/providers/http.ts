@@ -1,14 +1,79 @@
 import { ProviderError } from "@/lib/domain/types";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
-import type { DetailedPeerCertificate, TLSSocket } from "node:tls";
+import { rootCertificates } from "node:tls";
 
 const defaultAgent = "MiBoletinJudicial/1.0 (source monitoring; low frequency)";
 const dgejHost = "www.dgej.cjf.gob.mx";
-const dgejExpiredCertificateFingerprint = "82:B6:FC:21:E4:68:6A:C4:FC:98:AF:B8:D7:CD:E9:0F:1D:40:51:BA:17:02:06:5C:9F:57:F4:4A:FE:FC:19:61";
-const dgejExpiredCertificateGraceMs = 7 * 24 * 60 * 60 * 1000;
-// TLS session resumption can omit the peer certificate in Node. Disabling the
-// session cache ensures every exceptional request revalidates the pinned leaf.
-const dgejPinnedAgent = new HttpsAgent({ keepAlive: false, maxCachedSessions: 0 });
+// The official DGEJ server currently sends only its leaf certificate. Supplying
+// the missing public Let's Encrypt YR2 -> Root YR chain lets Node perform normal
+// certificate and hostname verification without disabling TLS validation.
+const letsEncryptYr2 = `-----BEGIN CERTIFICATE-----
+MIIE2jCCAsKgAwIBAgIQTr0klH4k05SALYSlL9WzGTANBgkqhkiG9w0BAQsFADAu
+MQswCQYDVQQGEwJVUzENMAsGA1UEChMESVNSRzEQMA4GA1UEAxMHUm9vdCBZUjAe
+Fw0yNTA5MDMwMDAwMDBaFw0yODA5MDIyMzU5NTlaMDMxCzAJBgNVBAYTAlVTMRYw
+FAYDVQQKEw1MZXQncyBFbmNyeXB0MQwwCgYDVQQDEwNZUjIwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQDZ0LxwBppqh84luqMerV/eeL/fXQ7mLQQv1Lnp
+WKZbyvGpx6wh6AfnslAnF6ewTkcHA+gSOoBvm3Dfm06AuGiF+KRut4fAcowqnAQQ
+CW98+QPP/eOv/wug7Iyk4NkOxf2I6g2f55T6nJoOTLFcukeRq80JGQEYan+dPFr9
+OGUgQK2hGKgNkW87pappsOAuUJcroYhRt5uUis4qaZireiseu32gzDJNBAiKtsvd
+6HX4v25bpkRNcS/B/Gtc9kVbUpD+2PLPxdei3Tim55k4tfAEXwD2qyiPTxrTNq6l
+N+AMr5g2c1dNqkOTwjxeV6L5lpP1rGiYvLnRaPlOqyZRPW+5AgMBAAGjge4wgesw
+DgYDVR0PAQH/BAQDAgGGMBMGA1UdJQQMMAoGCCsGAQUFBwMBMBIGA1UdEwEB/wQI
+MAYBAf8CAQAwHQYDVR0OBBYEFEAVLSZ57TIgnt+ach3WMh+BDIEMMB8GA1UdIwQY
+MBaAFN7nW2DQIm1AKH0/DQH+pLVStFGUMDIGCCsGAQUFBwEBBCYwJDAiBggrBgEF
+BQcwAoYWaHR0cDovL3lyLmkubGVuY3Iub3JnLzATBgNVHSAEDDAKMAgGBmeBDAEC
+ATAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8veXIuYy5sZW5jci5vcmcvMA0GCSqG
+SIb3DQEBCwUAA4ICAQB0ZUQWZ9/Yn9COEpo+JfecMnB0h0vwDm/M66IqXqw3LoaL
+mx9lZvRTeDIS67PUeI3yCA2W6PKRD0/FE/G57lOmS+Xy5AaaL00ICGOqjNcCaMWW
+8o8nevHOd4i4lqgtznE/28QwlcdJyF8yBiWHpnyjhEpmNWJURgOCOg2xpwRMBCsj
+MScqYPtOhBeuYQvSwAEeTML2Ukh6uGuX4E14q65Ja8cdjF5bAldnP1eE4FBaAwsZ
+G2fOqqrKV03Y85Nw2btedP1AtliQuJZs/Jo/gXxXdc7LrH3McgnpnbTiAncX7yES
+hP6kzQejllqMCIt52HOjxDGWafS7Xw+DKwqmH+Eqy8dcbOuag/1AYlQoKNVK3F5q
+Hh6tEDiMqQcLIibGKteE6iHo4A/bIScbzrhXUYuism42ZYzmc48FMVIH3qy4L84E
+TdAH2gtxw0PAhvRVXp8HP7wfngpzsN/8xOTpeRSbM4+Qbc56G6+Bifmv6sk1ieQb
+NA3wJdl4DDUuQSV8hBgx6zoI1ZSGORprDFux7c6rhc77QZMSRrEgomBeklervEve
+86ylWmZ3WWHV6RLMi8xNvjd71r4EPIGgY7BZU/VPBkq+uA7Gb6mbJnFgV43uh3xy
+LRFgxIAphIukwTGSMZZR+AI+Qnp0BYTWovHXozOf3H8r6hozEoT02JHn0AeTfA==
+-----END CERTIFICATE-----`;
+const isrgRootYr = `-----BEGIN CERTIFICATE-----
+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
+-----END CERTIFICATE-----`;
+const dgejCompletedChainAgent = new HttpsAgent({
+  keepAlive: false,
+  maxCachedSessions: 0,
+  ca: [...rootCertificates, letsEncryptYr2, isrgRootYr],
+});
 
 type NetworkError = Error & { code?: string; cause?: unknown };
 
@@ -20,16 +85,9 @@ function errorCode(error: unknown): string | undefined {
   return cause instanceof Error ? (cause as NetworkError).code : undefined;
 }
 
-function isExpiredCertificateError(error: unknown): boolean {
-  return errorCode(error) === "CERT_HAS_EXPIRED";
-}
-
-function certificateAllowsTemporaryDgejAccess(certificate: DetailedPeerCertificate): boolean {
-  const fingerprintMatches = certificate.fingerprint256?.toUpperCase() === dgejExpiredCertificateFingerprint;
-  const dnsMatches = certificate.subjectaltname?.split(",").some((entry) => entry.trim().toLowerCase() === `dns:${dgejHost}`) === true;
-  const expiresAt = Date.parse(certificate.valid_to);
-  const now = Date.now();
-  return fingerprintMatches && dnsMatches && Number.isFinite(expiresAt) && now >= expiresAt && now <= expiresAt + dgejExpiredCertificateGraceMs;
+function isDgejCertificateChainError(error: unknown): boolean {
+  return ["CERT_HAS_EXPIRED", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]
+    .includes(errorCode(error) ?? "");
 }
 
 function requestBody(body: BodyInit | null | undefined): string | Buffer | undefined {
@@ -42,15 +100,13 @@ function requestBody(body: BodyInit | null | undefined): string | Buffer | undef
 }
 
 /**
- * Temporary, narrowly scoped bridge for the DGEJ certificate that expired on
- * 2026-08-23. TLS remains encrypted and the exact leaf certificate, DNS name
- * and short grace period are all verified before any response is accepted.
- * A renewed certificate goes through the regular fetch path and this branch
- * becomes unreachable automatically.
+ * Narrowly scoped chain completion for the DGEJ deployment incident. Node
+ * still validates the complete chain, certificate dates and exact DNS name.
+ * Once the authority serves the chain, the regular fetch path is used.
  */
-async function fetchDgejWithPinnedExpiredCertificate(url: URL, init: RequestInit): Promise<Response> {
+async function fetchDgejWithCompletedCertificateChain(url: URL, init: RequestInit): Promise<Response> {
   if (url.protocol !== "https:" || url.hostname !== dgejHost) {
-    throw new ProviderError("SOURCE_UNAVAILABLE", "La excepción temporal de certificado no aplica a esta fuente", false);
+    throw new ProviderError("SOURCE_UNAVAILABLE", "La cadena adicional de confianza no aplica a esta fuente", false);
   }
   const body = requestBody(init.body);
   return new Promise<Response>((resolve, reject) => {
@@ -63,21 +119,10 @@ async function fetchDgejWithPinnedExpiredCertificate(url: URL, init: RequestInit
     const request = httpsRequest(url, {
       method: init.method ?? "GET",
       headers: Object.fromEntries(new Headers(init.headers).entries()),
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
       servername: dgejHost,
-      agent: dgejPinnedAgent,
+      agent: dgejCompletedChainAgent,
     }, (response) => {
-      const socket = response.socket as TLSSocket;
-      const certificate = socket.getPeerCertificate(true);
-      if (!certificateAllowsTemporaryDgejAccess(certificate)) {
-        response.resume();
-        finishReject(new ProviderError(
-          "SOURCE_UNAVAILABLE",
-          "El certificado temporal de la fuente federal no coincide con la identidad verificada",
-          false,
-        ));
-        return;
-      }
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       response.on("error", finishReject);
@@ -106,8 +151,8 @@ async function secureSourceFetch(url: string, init: RequestInit): Promise<Respon
     return await fetch(url, init);
   } catch (error) {
     const parsed = new URL(url);
-    if (parsed.hostname === dgejHost && isExpiredCertificateError(error)) {
-      return fetchDgejWithPinnedExpiredCertificate(parsed, init);
+    if (parsed.hostname === dgejHost && isDgejCertificateChainError(error)) {
+      return fetchDgejWithCompletedCertificateChain(parsed, init);
     }
     throw error;
   }
@@ -147,8 +192,8 @@ export async function respectfulFetch(url: string, init: RequestInit = {}, attem
   const code = errorCode(lastError);
   const message = isAbort
     ? "La fuente excedió 15 segundos"
-    : code === "CERT_HAS_EXPIRED"
-      ? "La fuente federal presenta un certificado HTTPS vencido"
+    : ["CERT_HAS_EXPIRED", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(code ?? "")
+      ? "La fuente federal presenta una incidencia en su cadena HTTPS"
       : "No fue posible conectar con la fuente";
   throw new ProviderError(isAbort ? "TIMEOUT" : "SOURCE_UNAVAILABLE", message, true);
 }

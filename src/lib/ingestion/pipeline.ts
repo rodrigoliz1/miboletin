@@ -126,6 +126,9 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
       normalized,
       errors,
     };
+    if (!dryRun && process.env.DATABASE_URL) {
+      try { await recordIngestionRun(result); } catch (auditError) { logger.error({ error: auditError }, "ingestion_run_failure_audit_failed"); }
+    }
     logger.error({ ...result }, "ingestion_failed");
     return result;
   }

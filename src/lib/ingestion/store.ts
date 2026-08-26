@@ -40,8 +40,23 @@ export async function persistPublications(provider: string, items: NormalizedPub
     const pendingDetectedAt: string[] = [];
     const discoveredCaseIds = new Set<string>();
     const federalHistoryCandidates = new Map<string, ReturnType<typeof extractParties>>();
+    let partyExtractionAttempts = 0;
     const jurisdiction = provider.startsWith("jalisco") ? "JALISCO" : "FEDERAL";
     const providerName = provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia del Estado de Jalisco" : jurisdiction === "JALISCO" ? "Consejo de la Judicatura del Estado de Jalisco" : "Poder Judicial de la Federación";
+    const partyParserVersion = `${items[0]?.parserVersion ?? "unknown"}|${PARTY_PARSER_VERSION}`;
+    const existingPublications = items.length ? await tx`
+      SELECT jp.content_hash, ss.sha256 AS snapshot_hash,
+             bool_or(per.publication_id IS NOT NULL) AS party_extraction_current
+      FROM judicial_publications jp
+      JOIN source_snapshots ss ON ss.id = jp.snapshot_id
+      LEFT JOIN party_extraction_records per
+        ON per.publication_id = jp.id AND per.parser_version = ${partyParserVersion}
+      WHERE jp.content_hash = ANY(${items.map((item) => item.contentHash)}::text[])
+      GROUP BY jp.content_hash, ss.sha256
+    ` : [];
+    const completedHashes = new Set(existingPublications
+      .filter((row) => row.party_extraction_current)
+      .map((row) => `${row.content_hash}:${row.snapshot_hash}`));
     const [authority] = await tx`
       INSERT INTO judicial_authorities (code, name, jurisdiction, source_url)
       VALUES (${provider}, ${providerName}, ${jurisdiction}, ${items[0]?.sourceUrl ?? ""})
@@ -50,6 +65,10 @@ export async function persistPublications(provider: string, items: NormalizedPub
     `;
 
     for (const item of items) {
+      if (completedHashes.has(`${item.contentHash}:${item.snapshotHash}`)) {
+        metrics.duplicates += 1;
+        continue;
+      }
       const rawContainer = item.rawPayload && typeof item.rawPayload === "object" ? item.rawPayload as Record<string, unknown> : {};
       const rawText = typeof rawContainer.rawHtml === "string" ? rawContainer.rawHtml : null;
       const rawPayload = Object.fromEntries(Object.entries(rawContainer).filter(([key]) => key !== "rawHtml"));
@@ -196,8 +215,8 @@ export async function persistPublications(provider: string, items: NormalizedPub
         }
       }
 
-      const partyParserVersion = `${item.parserVersion}|${PARTY_PARSER_VERSION}`;
       try {
+        partyExtractionAttempts += 1;
         const enrichment = await tx.savepoint(async (partyTx) => {
           let partyCandidates: ReturnType<typeof extractParties>;
           if (provider === "federal-pjf-session-lists" && federalAgreement && rawText) {
@@ -280,7 +299,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
         pendingDetectedAt.push(item.retrievedAt);
       }
     }
-    if (provider === "jalisco-cjj" && items.length >= 10 && metrics.partiesFound === 0) {
+    if (provider === "jalisco-cjj" && partyExtractionAttempts >= 10 && metrics.partiesFound === 0) {
       await tx`
         INSERT INTO domain_events (type, aggregate_type, payload)
         VALUES ('PARTY_EXTRACTION_DEGRADED', 'provider', ${tx.json({
