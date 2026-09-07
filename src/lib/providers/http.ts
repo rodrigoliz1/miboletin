@@ -158,11 +158,25 @@ async function secureSourceFetch(url: string, init: RequestInit): Promise<Respon
   }
 }
 
-export async function respectfulFetch(url: string, init: RequestInit = {}, attempts = 3): Promise<Response> {
+export interface RespectfulFetchPolicy {
+  attempts?: number;
+  timeoutMs?: number;
+}
+
+function fetchPolicy(policy: number | RespectfulFetchPolicy): Required<RespectfulFetchPolicy> {
+  if (typeof policy === "number") return { attempts: Math.max(1, policy), timeoutMs: 15_000 };
+  return {
+    attempts: Math.max(1, policy.attempts ?? 3),
+    timeoutMs: Math.min(120_000, Math.max(1_000, policy.timeoutMs ?? 15_000)),
+  };
+}
+
+export async function respectfulFetch(url: string, init: RequestInit = {}, policy: number | RespectfulFetchPolicy = 3): Promise<Response> {
+  const { attempts, timeoutMs } = fetchPolicy(policy);
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await secureSourceFetch(url, {
         ...init,
@@ -191,7 +205,7 @@ export async function respectfulFetch(url: string, init: RequestInit = {}, attem
   const isAbort = lastError instanceof Error && lastError.name === "AbortError";
   const code = errorCode(lastError);
   const message = isAbort
-    ? "La fuente excedió 15 segundos"
+    ? `La fuente excedió ${Math.ceil(timeoutMs / 1_000)} segundos`
     : ["CERT_HAS_EXPIRED", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(code ?? "")
       ? "La fuente federal presenta una incidencia en su cadena HTTPS"
       : "No fue posible conectar con la fuente";

@@ -39,7 +39,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const session = await getSession();
   if (!session) return null;
-  const { from, to, corrected } = normalizeDateRange(params);
+  const { from, to } = normalizeDateRange(params);
   const folderId = optionalUuid(params.folder);
   const [data, folders, movements] = await Promise.all([
     dashboardData(session.organizationId, session.userId, from, to),
@@ -73,7 +73,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <SourceAutoRefresh />
     {params.verified === "1" && <div className="notice success-notice" role="status"><strong>Correo verificado.</strong> Tu cuenta está lista. Activa la suscripción para comenzar a utilizar el espacio.</div>}
     {params.subscription === "active" && <div className="notice success-notice" role="status"><strong>Suscripción activada.</strong> Tu pago quedó vinculado a esta cuenta y el espacio ya está disponible.</div>}
-    {corrected && <div className="notice" role="status"><strong>Periodo ajustado.</strong> Se corrigieron fechas vacías, inválidas o invertidas antes de consultar.</div>}
     <section className="metrics"><div className="metric"><span className="metric-label">Expedientes vigilados</span><span className="metric-value">{data.counts.cases}</span></div><div className="metric metric-emphasis"><span className="metric-label">Resoluciones publicadas el día de hoy</span><span className="metric-value">{todayAgreementCount}</span></div><div className="metric"><span className="metric-label">Movimientos en el periodo</span><span className="metric-value">{movements.length}</span></div><div className="metric"><span className="metric-label">Alertas de hoy</span><span className="metric-value">{data.counts.unread}</span></div></section>
     <form className="period-filter panel" action="/dashboard"><div className="field"><label htmlFor="from">Desde</label><input id="from" type="date" name="from" defaultValue={from} /></div><div className="field"><label htmlFor="to">Hasta</label><input id="to" type="date" name="to" defaultValue={to} /></div><SearchableSelect name="folder" label="Carpeta" options={[{ value: "", label: "Todas las carpetas", group: "Vista general", description: `${data.counts.cases} asuntos vigilados` }, ...folders.map((folder) => ({ value: folder.id, label: folder.name, group: "Carpetas del despacho", description: `${folder.caseCount} ${folder.caseCount === 1 ? "asunto" : "asuntos"}` }))]} defaultValue={folderId ?? ""} searchPlaceholder="Buscar carpeta…" /><button className="button button-primary" type="submit">Aplicar periodo</button><Link className="button button-ghost" href={`/dashboard?from=${monthStartInMexicoCity()}&to=${dateInMexicoCity()}`}>Este mes</Link></form>
     <div className="dashboard-grid">

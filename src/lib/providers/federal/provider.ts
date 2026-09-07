@@ -462,7 +462,10 @@ export class FederalProvider implements JudicialSourceProvider {
     for (const typeId of typeIds) {
       const query = new URLSearchParams({ expediente: caseNumber, organismo: courtExternalId, tipoasunto: typeId, tipoprocedimiento: "0" });
       const sourceUrl = `${this.base}/Reportes/VerCaptura.aspx?${query.toString()}`;
-      const response = await respectfulFetch(sourceUrl, { headers: { Accept: "text/html" } });
+      // Las fichas históricas del SISE son sensiblemente más pesadas que sus
+      // catálogos. Se les da un presupuesto propio sin ralentizar las demás
+      // consultas del sistema.
+      const response = await respectfulFetch(sourceUrl, { headers: { Accept: "text/html" } }, { attempts: 2, timeoutMs: 45_000 });
       if (!response.ok) throw new ProviderError("SOURCE_UNAVAILABLE", `Ficha federal HTTP ${response.status}`, true);
       const html = await response.text();
       const parsed = parseFederalAgreementHistoryHtml(html, { caseNumber, caseType: caseType ?? "Asunto federal", courtExternalId, sourceUrl });

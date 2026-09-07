@@ -254,6 +254,15 @@ export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
       : provider === "federal-pjf-session-lists"
         ? "Las listas públicas permiten descubrir asuntos colegiados, pero no publican de forma uniforme los nombres de las partes."
         : undefined;
+    const coverageUnits = Number(row.coverage_units);
+    const incompleteUnits = Number(row.incomplete_units);
+    const catalogCourts = Number(row.catalog_courts);
+    const courtsWithInformation = Number(row.courts_with_information);
+    const coverageState: IndexCoverageRecord["coverageState"] = provider === "jalisco-stj-chambers"
+      ? "UNSUPPORTED"
+      : coverageUnits > 0 && incompleteUnits === 0 && catalogCourts > 0 && courtsWithInformation >= catalogCourts
+        ? "COMPLETE"
+        : "PARTIAL";
     return {
       provider,
       earliestIndexedDate: isoDate(row.earliest_date),
@@ -265,15 +274,15 @@ export async function getIndexCoverage(): Promise<IndexCoverageRecord[]> {
       mentionsIndexed: Number(row.mentions),
       partyExtractionRate: Number(row.cases) ? Number(row.cases_with_parties) / Number(row.cases) : 0,
       statusCounts: (row.status_counts ?? {}) as Record<string, number>,
-      catalogCourts: Number(row.catalog_courts),
-      expectedCourts: provider === "jalisco-cjj" ? Math.max(194, Number(row.catalog_courts)) : provider === "jalisco-stj-chambers" ? 11 : Number(row.catalog_courts),
-      courtsWithInformation: Number(row.courts_with_information),
+      catalogCourts,
+      expectedCourts: provider === "jalisco-cjj" ? Math.max(194, catalogCourts) : provider === "jalisco-stj-chambers" ? 11 : catalogCourts,
+      courtsWithInformation,
       courtsWithParties: Number(row.courts_with_parties),
-      coverageUnits: Number(row.coverage_units),
+      coverageUnits,
       completeUnits: Number(row.complete_units),
-      incompleteUnits: Number(row.incomplete_units),
+      incompleteUnits,
       lastCoverageAt: row.last_coverage_at ? (row.last_coverage_at instanceof Date ? row.last_coverage_at.toISOString() : String(row.last_coverage_at)) : undefined,
-      coverageState: provider === "jalisco-stj-chambers" ? "UNSUPPORTED" : "PARTIAL",
+      coverageState,
       limitation,
     };
   });

@@ -19,7 +19,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <form action="/api/auth/login" method="post">
             <div className="field"><label htmlFor="email">Correo electrónico</label><input id="email" name="email" type="email" autoComplete="email" required /></div>
             <PasswordField id="password" autoComplete="current-password" />
-            <div className="auth-form-link"><Link href="/forgot-password">Olvidé mi contraseña</Link></div>
+            <div className="auth-session-options">
+              <label className="auth-remember"><input id="remember" name="remember" type="checkbox" /><span><strong>Mantener sesión abierta</strong><small>Conservar el acceso en este dispositivo durante 30 días.</small></span></label>
+              <div className="auth-form-link"><Link href="/forgot-password">Olvidé mi contraseña</Link></div>
+            </div>
             <button className="button button-primary auth-submit" type="submit">Iniciar sesión</button>
           </form>
           <p className="auth-foot">¿Aún no tienes cuenta? <Link href="/register">Crear cuenta</Link></p>

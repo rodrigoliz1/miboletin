@@ -97,24 +97,32 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
   const pageSize = Math.min(50, Math.max(5, input.pageSize ?? 20));
   const offset = (page - 1) * pageSize;
   const rows = await db()`
-    WITH candidate_ids AS MATERIALIZED (
+    WITH exact_ids AS MATERIALIZED (
       SELECT id FROM case_parties WHERE active AND name_normalized = ${normalized}
       UNION
       SELECT id FROM case_parties WHERE active AND search_name = ${searchName}
       UNION
       SELECT id FROM case_parties WHERE active AND token_signature = ${tokenSignature}
+    ), candidate_ids AS MATERIALIZED (
+      SELECT id FROM exact_ids
       UNION
       SELECT id FROM case_parties WHERE active AND name_normalized LIKE ${`${normalized}%`}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
       UNION
       SELECT id FROM case_parties WHERE active AND search_name LIKE ${`${searchName}%`}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
       UNION
       SELECT id FROM case_parties WHERE active AND name_normalized % ${normalized}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
       UNION
       SELECT id FROM case_parties WHERE active AND search_name % ${searchName}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
       UNION
       SELECT id FROM case_parties WHERE active AND token_signature % ${tokenSignature}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
       UNION
       SELECT id FROM case_parties WHERE active AND name_normalized %> ${normalized}
+        AND NOT EXISTS (SELECT 1 FROM exact_ids)
     ), candidate_names AS MATERIALIZED (
       SELECT cp.id AS case_party_id, cp.case_id, cp.name_raw, cp.name_normalized, cp.search_name,
              cp.token_signature, cp.side, cp.party_type,
@@ -168,35 +176,41 @@ export async function searchParties(input: PartySearchInput): Promise<PartySearc
         AND (${input.resultType ?? null}::text IS NULL OR (${input.resultType ?? null} = 'DIRECT' AND ranked.direct) OR (${input.resultType ?? null} = 'RELATED' AND NOT ranked.direct))
         AND (${input.from ?? null}::date IS NULL OR EXISTS (SELECT 1 FROM judicial_publications dated WHERE dated.case_id = jc.id AND dated.publication_date >= ${input.from ?? null}::date))
         AND (${input.to ?? null}::date IS NULL OR EXISTS (SELECT 1 FROM judicial_publications dated WHERE dated.case_id = jc.id AND dated.publication_date <= ${input.to ?? null}::date))
+    ), publication_stats AS MATERIALIZED (
+      SELECT jp.case_id, count(*)::int AS publication_count, max(jp.publication_date) AS last_publication_date
+      FROM judicial_publications jp
+      JOIN filtered ON filtered.result_case_id = jp.case_id
+      GROUP BY jp.case_id
+    ), paged AS MATERIALIZED (
+      SELECT filtered.*, publications.publication_count, publications.last_publication_date,
+             count(*) OVER()::int AS total
+      FROM filtered
+      JOIN publication_stats publications ON publications.case_id = filtered.result_case_id
+      ORDER BY filtered.final_score DESC, publications.last_publication_date DESC NULLS LAST,
+               filtered.case_number_normalized
+      LIMIT ${pageSize} OFFSET ${offset}
     )
-    SELECT filtered.*, watched.id AS monitored_case_id,
-           publications.publication_count, publications.last_publication_date,
+    SELECT paged.*, watched.id AS monitored_case_id,
            parties.plaintiff, parties.defendant, evidence.source_url, evidence.publication_date,
-           COALESCE(evidence.extraction_method, filtered.method) AS evidence_method,
-           COALESCE(evidence.confidence, filtered.confidence)::float AS evidence_confidence,
-           count(*) OVER()::int AS total
-    FROM filtered
-    LEFT JOIN monitored_cases watched ON watched.case_id = filtered.result_case_id
+           COALESCE(evidence.extraction_method, paged.method) AS evidence_method,
+           COALESCE(evidence.confidence, paged.confidence)::float AS evidence_confidence
+    FROM paged
+    LEFT JOIN monitored_cases watched ON watched.case_id = paged.result_case_id
       AND watched.organization_id = ${input.organizationId} AND watched.active AND watched.deleted_at IS NULL
-    JOIN LATERAL (
-      SELECT count(*)::int AS publication_count, max(jp.publication_date) AS last_publication_date
-      FROM judicial_publications jp WHERE jp.case_id = filtered.result_case_id
-    ) publications ON publications.publication_count > 0
     LEFT JOIN LATERAL (
       SELECT string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side IN ('plaintiff','quejoso','promovente','recurrente','apelante')) AS plaintiff,
              string_agg(DISTINCT cp.name_raw, ' · ' ORDER BY cp.name_raw) FILTER (WHERE cp.side IN ('defendant','tercero_interesado','autoridad_responsable','apelado')) AS defendant
-      FROM case_parties cp WHERE cp.case_id = filtered.result_case_id AND cp.active
+      FROM case_parties cp WHERE cp.case_id = paged.result_case_id AND cp.active
     ) parties ON true
     LEFT JOIN LATERAL (
       SELECT cpm.source_url, cpm.publication_date, cpm.extraction_method, cpm.confidence
       FROM case_party_mentions cpm
-      WHERE cpm.case_party_id = filtered.case_party_id
+      WHERE cpm.case_party_id = paged.case_party_id
       ORDER BY cpm.publication_date DESC NULLS LAST, cpm.created_at DESC
       LIMIT 1
     ) evidence ON true
-    ORDER BY filtered.final_score DESC, publications.last_publication_date DESC NULLS LAST,
-             filtered.case_number_normalized
-    LIMIT ${pageSize} OFFSET ${offset}
+    ORDER BY paged.final_score DESC, paged.last_publication_date DESC NULLS LAST,
+             paged.case_number_normalized
   `;
   const coverage = await getIndexCoverage();
   return {

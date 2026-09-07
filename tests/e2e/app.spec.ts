@@ -86,7 +86,7 @@ test("registro, carpetas y alta persistente de asunto de Jalisco", async ({ page
   expect(emptyFolderResponse?.ok(), "el filtro sin carpeta no debe intentar convertir una cadena vacía a UUID").toBeTruthy();
   await expect(page.locator("body")).not.toContainText("invalid input syntax for type uuid");
   await page.goto("/dashboard?from=fecha-invalida&to=2026-08-01&folder=no-es-uuid");
-  await expect(page.getByText("Periodo ajustado.")).toBeVisible();
+  await expect(page.getByText("Periodo ajustado.")).toHaveCount(0);
   await page.getByRole("button", { name: "Ampliar Boletín de Resoluciones" }).click();
   await expect(page.getByRole("button", { name: "Cerrar vista ampliada de Boletín de Resoluciones" })).toBeVisible();
   await page.keyboard.press("Escape");

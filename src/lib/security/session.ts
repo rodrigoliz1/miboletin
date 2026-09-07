@@ -3,6 +3,7 @@ import { EncryptJWT, jwtDecrypt } from "jose";
 import { cookies } from "next/headers";
 import type { UserRole } from "@/lib/domain/types";
 import { db } from "@/lib/db/client";
+import { sessionPolicy } from "@/lib/security/session-policy";
 
 const COOKIE_NAME = "mbj_session";
 const fallbackSecret = "development-only-secret-change-before-production";
@@ -27,11 +28,12 @@ function secureCookie(): boolean {
   return process.env.NODE_ENV === "production" && process.env.E2E_TEST_MODE !== "1";
 }
 
-export async function createSession(payload: SessionPayload): Promise<void> {
+export async function createSession(payload: SessionPayload, options: { remember?: boolean } = {}): Promise<void> {
+  const policy = sessionPolicy(options.remember === true);
   const token = await new EncryptJWT({ ...payload })
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setIssuedAt()
-    .setExpirationTime("8h")
+    .setExpirationTime(`${policy.tokenLifetimeSeconds}s`)
     .setAudience("mi-boletin-judicial")
     .setIssuer("mi-boletin-judicial")
     .encrypt(secret());
@@ -40,7 +42,7 @@ export async function createSession(payload: SessionPayload): Promise<void> {
     secure: secureCookie(),
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 8,
+    ...(policy.cookieMaxAge ? { maxAge: policy.cookieMaxAge } : {}),
     priority: "high",
   });
 }

@@ -7,7 +7,11 @@ import { findAccountByEmail } from "@/lib/product/repository";
 import { isSameOrigin } from "@/lib/security/request";
 import { isEmailVerified, requestEmailVerification } from "@/lib/auth/email-verification";
 
-const loginSchema = z.object({ email: z.email().transform((value) => value.toLowerCase().trim()), password: z.string().min(8).max(128) });
+const loginSchema = z.object({
+  email: z.email().transform((value) => value.toLowerCase().trim()),
+  password: z.string().min(8).max(128),
+  remember: z.literal("on").optional(),
+});
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Origen no permitido" }, { status: 403 });
   const form = await request.formData();
@@ -21,7 +25,10 @@ export async function POST(request: Request) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     return NextResponse.redirect(new URL("/login?error=credentials", request.url), 303);
   }
-  await createSession({ userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName, sessionVersion: account.sessionVersion });
+  await createSession(
+    { userId: account.userId, email: account.email, name: account.name, role: account.role, organizationId: account.organizationId, organizationName: account.organizationName, sessionVersion: account.sessionVersion },
+    { remember: parsed.data.remember === "on" },
+  );
   if (!(await isEmailVerified(account.userId))) {
     try { await requestEmailVerification(account.userId); } catch (error) {
       if (!(error instanceof Error) || !["OTP_COOLDOWN", "OTP_RATE_LIMIT"].includes(error.message)) console.error("Login verification email could not be sent", error);

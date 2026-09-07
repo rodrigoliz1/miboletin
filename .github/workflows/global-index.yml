@@ -46,7 +46,12 @@ jobs:
 
   federal:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 105
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4"]
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
@@ -65,7 +70,7 @@ jobs:
       - name: Continuar índice federal global
         run: |
           INDEX_DATE=$(TZ=America/Mexico_City date +%F)
-          pnpm index:global -- --provider=federal-pjf-session-lists --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --max-units=120 --max-minutes=85 --max-consecutive-failures=3
+          pnpm index:global -- --provider=federal-pjf-session-lists --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --shard="${{ matrix.shard }}" --max-units=160 --max-minutes=85 --max-consecutive-failures=3
 
   deep-search:
     needs: jalisco

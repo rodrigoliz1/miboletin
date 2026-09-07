@@ -23,7 +23,230 @@ function textValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function bulkFederalHistoryEligible(provider: string, items: NormalizedPublication[]): boolean {
+  if (provider !== "federal-pjf-session-lists" || items.length < 20) return false;
+  const first = items[0];
+  return items.every((item) =>
+    item.courtExternalId === first.courtExternalId
+    && item.canonicalCaseKey === first.canonicalCaseKey
+    && item.snapshotHash === first.snapshotHash,
+  );
+}
+
+/** Fast path for the very large HTML history returned by a single SISE case. */
+async function persistFederalCaseHistory(items: NormalizedPublication[]): Promise<PersistenceMetrics> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    const first = items[0];
+    const metrics: PersistenceMetrics = {
+      inserted: 0, duplicates: 0, matches: 0, notifications: 0,
+      partiesFound: 0, partiesCreated: 0, mentionsCreated: 0, relationsCreated: 0, ambiguousParties: 0,
+    };
+    const parserVersion = `${first.parserVersion}|${PARTY_PARSER_VERSION}`;
+    const rawContainer = first.rawPayload && typeof first.rawPayload === "object" ? first.rawPayload as Record<string, unknown> : {};
+    const rawText = typeof rawContainer.rawHtml === "string" ? rawContainer.rawHtml : null;
+    const rawPayload = Object.fromEntries(Object.entries(rawContainer).filter(([key]) => key !== "rawHtml"));
+    let [authority] = await tx`SELECT id FROM judicial_authorities WHERE code = 'federal-pjf-session-lists' LIMIT 1`;
+    if (!authority) {
+      [authority] = await tx`
+        INSERT INTO judicial_authorities (code, name, jurisdiction, source_url)
+        VALUES ('federal-pjf-session-lists', 'Poder Judicial de la Federación', 'FEDERAL', ${first.sourceUrl})
+        ON CONFLICT (code) DO NOTHING RETURNING id
+      `;
+      if (!authority) [authority] = await tx`SELECT id FROM judicial_authorities WHERE code = 'federal-pjf-session-lists' LIMIT 1`;
+    }
+    let [court] = await tx`SELECT id FROM courts WHERE authority_id = ${authority.id} AND external_id = ${first.courtExternalId} LIMIT 1`;
+    if (!court) {
+      [court] = await tx`
+        INSERT INTO courts (authority_id, external_id, name, normalized_name, matter, last_seen_at)
+        VALUES (${authority.id}, ${first.courtExternalId}, ${first.courtName ?? `Órgano ${first.courtExternalId}`},
+                ${normalizeName(first.courtName ?? `Órgano ${first.courtExternalId}`)}, ${first.caseType ?? null}, now())
+        ON CONFLICT (authority_id, external_id) DO NOTHING RETURNING id
+      `;
+      if (!court) [court] = await tx`SELECT id FROM courts WHERE authority_id = ${authority.id} AND external_id = ${first.courtExternalId} LIMIT 1`;
+    }
+    let [judicialCase] = await tx`SELECT id FROM judicial_cases WHERE canonical_key = ${first.canonicalCaseKey} LIMIT 1`;
+    if (!judicialCase) {
+      [judicialCase] = await tx`
+        INSERT INTO judicial_cases (
+          authority_id, court_id, case_type, case_number_raw, case_number_normalized,
+          number, year, canonical_key, matter
+        ) VALUES (
+          ${authority.id}, ${court.id}, ${first.caseType || "NO_ESPECIFICADO"}, ${first.caseNumberRaw},
+          ${first.caseNumberNormalized}, ${first.number}, ${first.year}, ${first.canonicalCaseKey}, ${first.caseType ?? null}
+        )
+        ON CONFLICT (canonical_key) DO NOTHING RETURNING id
+      `;
+      if (!judicialCase) [judicialCase] = await tx`SELECT id FROM judicial_cases WHERE canonical_key = ${first.canonicalCaseKey} LIMIT 1`;
+    }
+    const [snapshot] = await tx`
+      INSERT INTO source_snapshots (
+        provider, external_id, court_external_id, publication_date, source_url, raw_payload, raw_text,
+        retrieved_at, sha256, parser_version, provider_version, response_headers, content_type, request_method, http_status
+      ) VALUES (
+        'federal-pjf-session-lists', ${`${first.courtExternalId}:${first.caseNumberNormalized}:history`}, ${first.courtExternalId},
+        ${first.publicationDate}, ${first.sourceUrl}, ${tx.json(rawPayload as never)}, ${rawText}, ${first.retrievedAt},
+        ${first.snapshotHash}, ${first.parserVersion}, ${first.providerVersion}, ${tx.json({})}, 'text/html', 'GET', 200
+      )
+      ON CONFLICT (sha256) DO UPDATE SET retrieved_at = GREATEST(source_snapshots.retrieved_at, EXCLUDED.retrieved_at)
+      RETURNING id
+    `;
+    const [previousEnrichment] = await tx`
+      SELECT 1
+      FROM party_extraction_records per
+      JOIN judicial_publications jp ON jp.id = per.publication_id
+      WHERE jp.case_id = ${judicialCase.id} AND per.parser_version = ${parserVersion}
+      LIMIT 1
+    `;
+    const publicationRows = items.map((item) => {
+      const container = item.rawPayload && typeof item.rawPayload === "object" ? item.rawPayload as Record<string, unknown> : {};
+      const federalRecord = container.record && typeof container.record === "object" ? container.record as Record<string, unknown> : null;
+      const agreement = container.agreement && typeof container.agreement === "object" ? container.agreement as Record<string, unknown> : null;
+      const publicationKind = federalRecord?.filter === "lista" ? "SESSION_LISTED" : federalRecord?.filter === "sesion" ? "SESSION_RESULT" : "AGREEMENT";
+      return {
+        case_id: judicialCase.id, court_id: court.id, snapshot_id: snapshot.id,
+        external_id: item.externalId ?? null, case_number_raw: item.caseNumberRaw,
+        case_number_normalized: item.caseNumberNormalized, case_type: item.caseType ?? null,
+        official_text: item.officialText, publication_date: item.publicationDate,
+        agreement_date: item.agreementDate ?? null, promotion_date: item.promotionDate ?? null,
+        publication_kind: publicationKind, notebook: textValue(agreement?.notebook),
+        retrieved_at: item.retrievedAt, content_hash: item.contentHash, source_url: item.sourceUrl,
+      };
+    });
+    const publications = await tx`
+      INSERT INTO judicial_publications ${tx(publicationRows,
+        "case_id", "court_id", "snapshot_id", "external_id", "case_number_raw", "case_number_normalized",
+        "case_type", "official_text", "publication_date", "agreement_date", "promotion_date", "publication_kind",
+        "notebook", "retrieved_at", "content_hash", "source_url")}
+      ON CONFLICT (court_id, content_hash) DO UPDATE SET snapshot_id = judicial_publications.snapshot_id
+      RETURNING id, content_hash, (xmax = 0) AS inserted
+    `;
+    metrics.inserted = publications.filter((row) => row.inserted).length;
+    metrics.duplicates = publications.length - metrics.inserted;
+    const publicationByHash = new Map(publications.map((row) => [String(row.content_hash), String(row.id)]));
+
+    const sessionRows = items.flatMap((item) => {
+      const container = item.rawPayload && typeof item.rawPayload === "object" ? item.rawPayload as Record<string, unknown> : {};
+      const record = container.record && typeof container.record === "object" ? container.record as Record<string, unknown> : null;
+      const publicationId = publicationByHash.get(item.contentHash);
+      return record && publicationId ? [{ publicationId, record }] : [];
+    });
+    if (sessionRows.length) {
+      await tx`
+        INSERT INTO federal_session_details (
+          publication_id, neun, row_external_id, filter_kind, session_type, list_date, session_date,
+          result, rapporteur, project_secretary, responsible_authority, judgment, project_publicity, source_file
+        ) SELECT * FROM unnest(
+          ${sessionRows.map(({ publicationId }) => publicationId)}::uuid[],
+          ${sessionRows.map(({ record }) => textValue(record.neun))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.rowId))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.filter))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.sessionType))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.listDate))}::date[],
+          ${sessionRows.map(({ record }) => textValue(record.sessionDate))}::date[],
+          ${sessionRows.map(({ record }) => textValue(record.result))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.rapporteur))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.projectSecretary))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.authority))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.judgment))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.projectPublicity))}::text[],
+          ${sessionRows.map(({ record }) => textValue(record.file))}::text[]
+        ) ON CONFLICT (publication_id) DO NOTHING
+      `;
+    }
+
+    const firstPublication = publications[0];
+    const candidates = extractParties({ provider: "federal-pjf-session-lists", parties: first.parties, rawPayload, rawText, officialText: "" });
+    if (firstPublication && !previousEnrichment && candidates.length) {
+      const partyMetrics = await persistPartyCandidates(tx, {
+        caseId: String(judicialCase.id), publicationId: String(firstPublication.id), snapshotId: String(snapshot.id),
+        provider: "federal-pjf-session-lists", sourceUrl: first.sourceUrl,
+        publicationDate: first.publicationDate, parserVersion,
+      }, candidates);
+      metrics.partiesFound = partyMetrics.partiesFound;
+      metrics.partiesCreated = partyMetrics.partiesCreated;
+      metrics.mentionsCreated = partyMetrics.mentionsCreated;
+      metrics.ambiguousParties = partyMetrics.ambiguous;
+      if (partyMetrics.mentionsCreated < partyMetrics.partiesFound) {
+        metrics.notifications += await matchKnownPartiesToWatchRules(tx, {
+          caseId: String(judicialCase.id), publicationId: String(firstPublication.id), snapshotId: String(snapshot.id),
+          provider: "federal-pjf-session-lists", sourceUrl: first.sourceUrl,
+          publicationDate: first.publicationDate, parserVersion,
+        });
+      }
+    }
+    if (firstPublication) {
+      await tx`
+        INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found, details)
+        SELECT publication_id, ${parserVersion}, 'federal-pjf-session-lists',
+               ${candidates.length ? "EXTRACTED_FROM_SHARED_HISTORY" : "NO_CANDIDATES"}, ${candidates.length},
+               ${tx.json({ sharedSnapshot: first.snapshotHash })}
+        FROM unnest(${publications.map((row) => String(row.id))}::uuid[]) AS input(publication_id)
+        ON CONFLICT (publication_id, parser_version) DO UPDATE SET
+          status = EXCLUDED.status, candidates_found = EXCLUDED.candidates_found,
+          details = EXCLUDED.details, processed_at = now()
+      `;
+    }
+    if (!previousEnrichment) {
+      await recomputePartyDiscoveryStatuses(tx, [String(judicialCase.id)], "federal-pjf-session-lists", parserVersion);
+    }
+
+    const monitored = await tx`
+      SELECT mc.id FROM monitored_cases mc
+      WHERE mc.case_id = ${judicialCase.id} AND mc.active AND mc.deleted_at IS NULL
+    `;
+    if (monitored.length && publications.length) {
+      const monitoredIds = monitored.flatMap((entry) => publications.map(() => String(entry.id)));
+      const publicationIds = monitored.flatMap(() => publications.map((entry) => String(entry.id)));
+      const detectedAt = monitored.flatMap(() => items.map((item) => item.retrievedAt));
+      const movements = await tx`
+        INSERT INTO case_movements (monitored_case_id, publication_id, match_result, detected_at)
+        SELECT monitored_case_id, publication_id, 'EXACT', detected_at
+        FROM unnest(${monitoredIds}::uuid[], ${publicationIds}::uuid[], ${detectedAt}::timestamptz[])
+          AS input(monitored_case_id, publication_id, detected_at)
+        ON CONFLICT DO NOTHING RETURNING id
+      `;
+      metrics.matches = movements.length;
+      if (movements.length) {
+        const movementIds = movements.map((movement) => String(movement.id));
+        const notifications = await tx`
+          INSERT INTO notifications (user_id, movement_id, channel, subject, payload)
+          SELECT recipients.user_id, cm.id, delivery.channel,
+                 CASE jp.publication_kind
+                   WHEN 'SESSION_LISTED' THEN 'Asunto federal listado para sesión: ' || watched.case_number_normalized
+                   WHEN 'SESSION_RESULT' THEN 'Resultado de sesión federal: ' || watched.case_number_normalized
+                   ELSE CASE WHEN jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)'
+                     THEN 'Resolución relacionada con sentencia: ' ELSE 'Nuevo acuerdo federal: ' END || watched.case_number_normalized
+                 END,
+                 jsonb_build_object('publicationId', jp.id, 'matchResult', 'EXACT',
+                   'publicationKind', jp.publication_kind, 'publicationDate', jp.publication_date,
+                   'sessionDate', jp.agreement_date)
+          FROM case_movements cm
+          JOIN monitored_cases mc ON mc.id = cm.monitored_case_id
+          JOIN judicial_cases watched ON watched.id = mc.case_id
+          JOIN judicial_publications jp ON jp.id = cm.publication_id
+          JOIN LATERAL (
+            SELECT mc.user_id WHERE mc.user_id IS NOT NULL
+            UNION SELECT m.user_id FROM memberships m WHERE m.organization_id = mc.organization_id
+          ) recipients ON true
+          CROSS JOIN (VALUES ('IN_APP'), ('EMAIL')) AS delivery(channel)
+          WHERE cm.id = ANY(${movementIds}::uuid[])
+            AND (delivery.channel = 'IN_APP' OR (
+              jp.publication_date >= mc.created_at::date
+              AND (jp.publication_kind IN ('SESSION_LISTED', 'SESSION_RESULT')
+                OR jp.official_text ~* '(^|[^[:alpha:]])sentencias?([^[:alpha:]]|$)')
+            ))
+          ON CONFLICT DO NOTHING RETURNING id
+        `;
+        metrics.notifications += notifications.length;
+      }
+    }
+    return metrics;
+  });
+}
+
 export async function persistPublications(provider: string, items: NormalizedPublication[]): Promise<PersistenceMetrics> {
+  if (bulkFederalHistoryEligible(provider, items)) return persistFederalCaseHistory(items);
   const sql = db();
   return sql.begin(async (tx) => {
     const metrics: PersistenceMetrics = {
@@ -40,6 +263,7 @@ export async function persistPublications(provider: string, items: NormalizedPub
     const pendingDetectedAt: string[] = [];
     const discoveredCaseIds = new Set<string>();
     const federalHistoryCandidates = new Map<string, ReturnType<typeof extractParties>>();
+    const enrichedFederalHistorySnapshots = new Set<string>();
     let partyExtractionAttempts = 0;
     const jurisdiction = provider.startsWith("jalisco") ? "JALISCO" : "FEDERAL";
     const providerName = provider === "jalisco-stj-chambers" ? "Supremo Tribunal de Justicia del Estado de Jalisco" : jurisdiction === "JALISCO" ? "Consejo de la Judicatura del Estado de Jalisco" : "Poder Judicial de la Federación";
@@ -57,12 +281,15 @@ export async function persistPublications(provider: string, items: NormalizedPub
     const completedHashes = new Set(existingPublications
       .filter((row) => row.party_extraction_current)
       .map((row) => `${row.content_hash}:${row.snapshot_hash}`));
-    const [authority] = await tx`
-      INSERT INTO judicial_authorities (code, name, jurisdiction, source_url)
-      VALUES (${provider}, ${providerName}, ${jurisdiction}, ${items[0]?.sourceUrl ?? ""})
-      ON CONFLICT (code) DO UPDATE SET source_url = EXCLUDED.source_url
-      RETURNING id
-    `;
+    let [authority] = await tx`SELECT id FROM judicial_authorities WHERE code = ${provider} LIMIT 1`;
+    if (!authority) {
+      [authority] = await tx`
+        INSERT INTO judicial_authorities (code, name, jurisdiction, source_url)
+        VALUES (${provider}, ${providerName}, ${jurisdiction}, ${items[0]?.sourceUrl ?? ""})
+        ON CONFLICT (code) DO NOTHING RETURNING id
+      `;
+      if (!authority) [authority] = await tx`SELECT id FROM judicial_authorities WHERE code = ${provider} LIMIT 1`;
+    }
 
     for (const item of items) {
       if (completedHashes.has(`${item.contentHash}:${item.snapshotHash}`)) {
@@ -94,27 +321,33 @@ export async function persistPublications(provider: string, items: NormalizedPub
       }
       let court = courtsByExternalId.get(item.courtExternalId);
       if (!court) {
-        [court] = await tx`
-          INSERT INTO courts (authority_id, external_id, name, normalized_name, matter, last_seen_at)
-          VALUES (${authority.id}, ${item.courtExternalId}, ${item.courtName ?? `Órgano ${item.courtExternalId}`}, ${normalizeName(item.courtName ?? `Órgano ${item.courtExternalId}`)}, ${item.caseType ?? null}, now())
-          ON CONFLICT (authority_id, external_id) DO UPDATE SET name = EXCLUDED.name, normalized_name = EXCLUDED.normalized_name, last_seen_at = now()
-          RETURNING id
-        ` as Array<{ id: string }>;
+        [court] = await tx`SELECT id FROM courts WHERE authority_id = ${authority.id} AND external_id = ${item.courtExternalId} LIMIT 1` as Array<{ id: string }>;
+        if (!court) {
+          [court] = await tx`
+            INSERT INTO courts (authority_id, external_id, name, normalized_name, matter, last_seen_at)
+            VALUES (${authority.id}, ${item.courtExternalId}, ${item.courtName ?? `Órgano ${item.courtExternalId}`}, ${normalizeName(item.courtName ?? `Órgano ${item.courtExternalId}`)}, ${item.caseType ?? null}, now())
+            ON CONFLICT (authority_id, external_id) DO NOTHING RETURNING id
+          ` as Array<{ id: string }>;
+          if (!court) [court] = await tx`SELECT id FROM courts WHERE authority_id = ${authority.id} AND external_id = ${item.courtExternalId} LIMIT 1` as Array<{ id: string }>;
+        }
         courtsByExternalId.set(item.courtExternalId, court);
       }
       let judicialCase = casesByCanonicalKey.get(item.canonicalCaseKey);
       if (!judicialCase) {
-        [judicialCase] = await tx`
-          INSERT INTO judicial_cases (
-            authority_id, court_id, case_type, case_number_raw, case_number_normalized,
-            number, year, canonical_key, matter
-          ) VALUES (
-            ${authority.id}, ${court.id}, ${item.caseType || "NO_ESPECIFICADO"}, ${item.caseNumberRaw},
-            ${item.caseNumberNormalized}, ${item.number}, ${item.year}, ${item.canonicalCaseKey}, ${item.caseType ?? null}
-          )
-          ON CONFLICT (canonical_key) DO UPDATE SET case_number_raw = EXCLUDED.case_number_raw
-          RETURNING id
-        ` as Array<{ id: string }>;
+        [judicialCase] = await tx`SELECT id FROM judicial_cases WHERE canonical_key = ${item.canonicalCaseKey} LIMIT 1` as Array<{ id: string }>;
+        if (!judicialCase) {
+          [judicialCase] = await tx`
+            INSERT INTO judicial_cases (
+              authority_id, court_id, case_type, case_number_raw, case_number_normalized,
+              number, year, canonical_key, matter
+            ) VALUES (
+              ${authority.id}, ${court.id}, ${item.caseType || "NO_ESPECIFICADO"}, ${item.caseNumberRaw},
+              ${item.caseNumberNormalized}, ${item.number}, ${item.year}, ${item.canonicalCaseKey}, ${item.caseType ?? null}
+            )
+            ON CONFLICT (canonical_key) DO NOTHING RETURNING id
+          ` as Array<{ id: string }>;
+          if (!judicialCase) [judicialCase] = await tx`SELECT id FROM judicial_cases WHERE canonical_key = ${item.canonicalCaseKey} LIMIT 1` as Array<{ id: string }>;
+        }
         casesByCanonicalKey.set(item.canonicalCaseKey, judicialCase);
       }
       discoveredCaseIds.add(String(judicialCase.id));
@@ -217,47 +450,64 @@ export async function persistPublications(provider: string, items: NormalizedPub
 
       try {
         partyExtractionAttempts += 1;
-        const enrichment = await tx.savepoint(async (partyTx) => {
-          let partyCandidates: ReturnType<typeof extractParties>;
-          if (provider === "federal-pjf-session-lists" && federalAgreement && rawText) {
-            let historyCandidates = federalHistoryCandidates.get(item.snapshotHash);
-            if (!historyCandidates) {
-              historyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: "" });
-              federalHistoryCandidates.set(item.snapshotHash, historyCandidates);
-            }
-            partyCandidates = historyCandidates.length
-              ? historyCandidates
-              : extractParties({ provider, rawPayload, rawText: null, officialText: item.officialText });
-          } else {
-            partyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: item.officialText });
-          }
-          const partyMetrics = await persistPartyCandidates(partyTx, {
-            caseId: String(judicialCase.id),
-            publicationId: String(publications[0].id),
-            snapshotId: String(snapshot.id),
-            provider,
-            sourceUrl: item.sourceUrl,
-            publicationDate: item.publicationDate,
-            parserVersion: partyParserVersion,
-          }, partyCandidates);
-          await partyTx`
-            INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found)
-            VALUES (${publications[0].id}, ${partyParserVersion}, ${provider}, ${partyCandidates.length ? "EXTRACTED" : "NO_CANDIDATES"}, ${partyCandidates.length})
+        const sharedFederalHistory = provider === "federal-pjf-session-lists" && Boolean(federalAgreement && rawText);
+        if (sharedFederalHistory && enrichedFederalHistorySnapshots.has(item.snapshotHash)) {
+          const sharedCandidates = federalHistoryCandidates.get(item.snapshotHash) ?? [];
+          await tx`
+            INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found, details)
+            VALUES (${publications[0].id}, ${partyParserVersion}, ${provider},
+                    ${sharedCandidates.length ? "EXTRACTED_FROM_SHARED_HISTORY" : "NO_CANDIDATES"},
+                    ${sharedCandidates.length}, ${tx.json({ sharedSnapshot: item.snapshotHash })})
             ON CONFLICT (publication_id, parser_version) DO UPDATE SET
-              status = EXCLUDED.status, candidates_found = EXCLUDED.candidates_found, details = '{}', processed_at = now()
+              status = EXCLUDED.status, candidates_found = EXCLUDED.candidates_found,
+              details = EXCLUDED.details, processed_at = now()
           `;
-          const notifications = await matchKnownPartiesToWatchRules(partyTx, {
-            caseId: String(judicialCase.id), publicationId: String(publications[0].id), snapshotId: String(snapshot.id),
-            provider, sourceUrl: item.sourceUrl, publicationDate: item.publicationDate, parserVersion: partyParserVersion,
+        } else {
+          const enrichment = await tx.savepoint(async (partyTx) => {
+            let partyCandidates: ReturnType<typeof extractParties>;
+            if (provider === "federal-pjf-session-lists" && federalAgreement && rawText) {
+              let historyCandidates = federalHistoryCandidates.get(item.snapshotHash);
+              if (!historyCandidates) {
+                historyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: "" });
+                federalHistoryCandidates.set(item.snapshotHash, historyCandidates);
+              }
+              partyCandidates = historyCandidates.length
+                ? historyCandidates
+                : extractParties({ provider, rawPayload, rawText: null, officialText: item.officialText });
+            } else {
+              partyCandidates = extractParties({ provider, parties: item.parties, rawPayload, rawText, officialText: item.officialText });
+            }
+            const partyMetrics = await persistPartyCandidates(partyTx, {
+              caseId: String(judicialCase.id),
+              publicationId: String(publications[0].id),
+              snapshotId: String(snapshot.id),
+              provider,
+              sourceUrl: item.sourceUrl,
+              publicationDate: item.publicationDate,
+              parserVersion: partyParserVersion,
+            }, partyCandidates);
+            await partyTx`
+              INSERT INTO party_extraction_records (publication_id, parser_version, provider, status, candidates_found)
+              VALUES (${publications[0].id}, ${partyParserVersion}, ${provider}, ${partyCandidates.length ? "EXTRACTED" : "NO_CANDIDATES"}, ${partyCandidates.length})
+              ON CONFLICT (publication_id, parser_version) DO UPDATE SET
+                status = EXCLUDED.status, candidates_found = EXCLUDED.candidates_found, details = '{}', processed_at = now()
+            `;
+            const notifications = partyMetrics.mentionsCreated < partyMetrics.partiesFound
+              ? await matchKnownPartiesToWatchRules(partyTx, {
+                  caseId: String(judicialCase.id), publicationId: String(publications[0].id), snapshotId: String(snapshot.id),
+                  provider, sourceUrl: item.sourceUrl, publicationDate: item.publicationDate, parserVersion: partyParserVersion,
+                })
+              : 0;
+            return { partyMetrics, notifications };
           });
-          return { partyMetrics, notifications };
-        });
-        const { partyMetrics } = enrichment;
-        metrics.partiesFound += partyMetrics.partiesFound;
-        metrics.partiesCreated += partyMetrics.partiesCreated;
-        metrics.mentionsCreated += partyMetrics.mentionsCreated;
-        metrics.ambiguousParties += partyMetrics.ambiguous;
-        metrics.notifications += enrichment.notifications;
+          if (sharedFederalHistory) enrichedFederalHistorySnapshots.add(item.snapshotHash);
+          const { partyMetrics } = enrichment;
+          metrics.partiesFound += partyMetrics.partiesFound;
+          metrics.partiesCreated += partyMetrics.partiesCreated;
+          metrics.mentionsCreated += partyMetrics.mentionsCreated;
+          metrics.ambiguousParties += partyMetrics.ambiguous;
+          metrics.notifications += enrichment.notifications;
+        }
       } catch (error) {
         try {
           await tx.savepoint(async (failureTx) => {

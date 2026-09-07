@@ -745,6 +745,13 @@ button:active, .button:active { transform: translateY(1px); }
 
 .auth-form-link { margin: -5px 0 14px; text-align: right; }
 .auth-form-link a, .verify-actions a { color: var(--burgundy); font-size: 9px; font-weight: 700; }
+.auth-session-options { margin: -4px 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.auth-session-options .auth-form-link { flex: none; margin: 0; }
+.auth-remember { min-width: 0; display: flex; align-items: flex-start; gap: 9px; color: var(--graphite); cursor: pointer; }
+.auth-remember input { width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--burgundy); }
+.auth-remember span, .auth-remember strong, .auth-remember small { display: block; }
+.auth-remember strong { font-size: 9px; line-height: 1.25; }
+.auth-remember small { margin-top: 3px; color: var(--stone); font-size: 8px; line-height: 1.35; }
 .password-recovery-card { width: min(540px, 100%); }
 .password-reset-form > .field { height: auto; margin-top: 15px; display: block; border: 0; background: transparent; }
 .password-reset-form > .field > label { display: block; margin-bottom: 7px; color: var(--graphite); font-size: 10px; }

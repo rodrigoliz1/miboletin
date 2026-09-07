@@ -27,6 +27,13 @@ export interface IngestionResult {
 }
 
 const observedHashes = new Set<string>();
+const PERSISTENCE_BATCH_SIZE = 500;
+
+function batches<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
+}
 
 export async function runIngestion(provider: JudicialSourceProvider, query: PublicationQuery, dryRun = false): Promise<IngestionResult> {
   const jobId = `${provider.id}-${nanoid(10)}`;
@@ -75,13 +82,18 @@ export async function runIngestion(provider: JudicialSourceProvider, query: Publ
         errors.push("STORE_DISABLED: DATABASE_URL no está configurada; no se afirmó ninguna inserción");
       } else {
         try {
-          const persistence = await persistPublications(provider.id, normalized);
-          recordsInserted = persistence.inserted;
-          duplicates += persistence.duplicates;
-          matches = persistence.matches;
-          notifications = persistence.notifications;
-          partiesFound = persistence.partiesFound;
-          mentionsCreated = persistence.mentionsCreated;
+          // Large federal histories may contain thousands of entries. Committing
+          // bounded batches makes confirmed results visible progressively and
+          // prevents one slow source from holding database locks for minutes.
+          for (const batch of batches(normalized, PERSISTENCE_BATCH_SIZE)) {
+            const persistence = await persistPublications(provider.id, batch);
+            recordsInserted += persistence.inserted;
+            duplicates += persistence.duplicates;
+            matches += persistence.matches;
+            notifications += persistence.notifications;
+            partiesFound += persistence.partiesFound;
+            mentionsCreated += persistence.mentionsCreated;
+          }
         } catch (error) {
           errors.push(`STORE_FAILED: ${error instanceof Error ? error.message : "error desconocido"}`);
         }
