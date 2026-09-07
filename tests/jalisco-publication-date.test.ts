@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { nextJaliscoBusinessDate, previousJaliscoBusinessDate } from "@/lib/providers/jalisco/provider";
+import { formalJaliscoPublicationDate, nextJaliscoBusinessDate, previousJaliscoBusinessDate } from "@/lib/providers/jalisco/provider";
 
 describe("fechas del boletín judicial de Jalisco", () => {
   it("publica el acuerdo en el siguiente día hábil", () => {
     expect(nextJaliscoBusinessDate("2026-08-17")).toBe("2026-08-18");
     expect(nextJaliscoBusinessDate("2026-08-21")).toBe("2026-08-24");
     expect(nextJaliscoBusinessDate("2026-08-22")).toBe("2026-08-24");
+    expect(nextJaliscoBusinessDate("2026-09-04")).toBe("2026-09-07");
+  });
+
+  it("uses the formal next-business-day date even when the portal exposes the auto early", () => {
+    expect(formalJaliscoPublicationDate("2026-09-04", "2026-09-04")).toBe("2026-09-07");
+    expect(formalJaliscoPublicationDate("2026-09-04", "2026-09-05")).toBe("2026-09-07");
   });
 
   it("consulta el día hábil anterior al boletín solicitado", () => {

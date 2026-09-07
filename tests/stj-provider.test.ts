@@ -13,7 +13,7 @@ describe("STJ Jalisco agreements", () => {
     const html = readFileSync(resolve("tests/fixtures/stj/agreements.anonymized.html"), "utf8");
     const records = parseStjAgreementsHtml(html, "5", "125/2026");
     expect(records).toHaveLength(2);
-    expect(records[0]).toMatchObject({ courtExternalId: "5", caseNumberRaw: "125/2026", publicationDate: "2026-06-04" });
+    expect(records[0]).toMatchObject({ courtExternalId: "5", caseNumberRaw: "125/2026", agreementDate: "2026-06-04", publicationDate: "2026-06-05" });
     expect(records[0].metadata).toMatchObject({ originCaseNumber: "101/2022", originCourt: "7", sentenceSignal: "DECISION" });
     expect(records.some((record) => record.caseNumberRaw === "999/2026")).toBe(false);
   });

@@ -10,6 +10,7 @@ import {
   type RawPublication,
 } from "@/lib/domain/types";
 import { respectfulFetch } from "@/lib/providers/http";
+import { nextBusinessDate, previousBusinessDate } from "@/lib/domain/business-days";
 
 const envelopeSchema = z.object({ success: z.union([z.number(), z.string()]), data: z.unknown() });
 const sourceErrorSchema = z.object({ code: z.string().min(1), message: z.string().optional() }).passthrough();
@@ -91,19 +92,16 @@ const catalogSources: Array<{
 let catalogCache: { expiresAt: number; value: JaliscoCourtCatalogItem[] } | null = null;
 let catalogRequest: Promise<JaliscoCourtCatalogItem[]> | null = null;
 
-function shiftBusinessDate(date: string, direction: -1 | 1): string {
-  const parsed = new Date(`${date}T12:00:00Z`);
-  do parsed.setUTCDate(parsed.getUTCDate() + direction);
-  while (parsed.getUTCDay() === 0 || parsed.getUTCDay() === 6);
-  return parsed.toISOString().slice(0, 10);
-}
-
 export function previousJaliscoBusinessDate(date: string): string {
-  return shiftBusinessDate(date, -1);
+  return previousBusinessDate(date);
 }
 
 export function nextJaliscoBusinessDate(date: string): string {
-  return shiftBusinessDate(date, 1);
+  return nextBusinessDate(date);
+}
+
+export function formalJaliscoPublicationDate(agreementDate?: string, sourcePublicationDate?: string, fallbackDate?: string): string | undefined {
+  return agreementDate ? nextJaliscoBusinessDate(agreementDate) : sourcePublicationDate ?? fallbackDate;
 }
 
 function dateOnly(value: string | null | undefined): string | undefined {
@@ -154,9 +152,10 @@ function recordToPublication(
 ): RawPublication {
   const agreementDate = dateOnly(record.FCH_ACU ?? record.FCH_ACUERDO);
   const promotionDate = dateOnly(record.FCH_PRO ?? record.FECHA_PROMOCION);
-  const publicationDate = dateOnly(record.FCH_BOLETIN)
-    ?? (agreementDate ? nextJaliscoBusinessDate(agreementDate) : undefined)
-    ?? promotionDate
+  // La fecha del portal identifica el auto; para el boletín del usuario la
+  // publicación surte efectos el día hábil siguiente, aun si la fuente lo
+  // exhibe anticipadamente el mismo día.
+  const publicationDate = formalJaliscoPublicationDate(agreementDate, dateOnly(record.FCH_BOLETIN), promotionDate)
     ?? new Date().toISOString().slice(0, 10);
   return {
     externalId: `${court.family}:${court.externalId}:${record.EXP}:${agreementDate ?? publicationDate}:${index}`,
@@ -180,8 +179,8 @@ function recordToPublication(
 export class JaliscoProvider implements JudicialSourceProvider {
   readonly id = "jalisco-cjj";
   readonly name = "Consejo de la Judicatura del Estado de Jalisco";
-  readonly providerVersion = "2.0.1";
-  readonly parserVersion = "jalisco-multi-family-json-3";
+  readonly providerVersion = "2.0.2";
+  readonly parserVersion = "jalisco-multi-family-json-4";
   private readonly base = process.env.JALISCO_API_BASE ?? "https://api.cjj.gob.mx";
   private readonly officialPage = "https://cjj.gob.mx/bulletin";
   constructor(private readonly catalogOverride?: JaliscoCourtCatalogItem[]) {}

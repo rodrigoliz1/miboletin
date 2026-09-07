@@ -3,6 +3,7 @@ import { canonicalCaseKey, normalizeCaseNumber, sha256, stableJson } from "@/lib
 import type { CourtCatalogItem, JudicialSourceProvider, NormalizedPublication, ProviderHealth, PublicationQuery, RawPublication } from "@/lib/domain/types";
 import { ProviderError } from "@/lib/domain/types";
 import { respectfulFetch } from "@/lib/providers/http";
+import { nextBusinessDate } from "@/lib/domain/business-days";
 
 export const STJ_AGREEMENTS_URL = "https://consultas.stjjalisco.gob.mx/consultas/acuerdos";
 export const STJ_JUDGMENTS_URL = "https://publicacionsentencias.stjjalisco.gob.mx/sentencias";
@@ -100,7 +101,7 @@ export function parseStjAgreementsHtml(html: string, chamberExternalId: string, 
       caseNumberRaw: toca,
       caseType: "Toca",
       officialText,
-      publicationDate: agreementDate,
+      publicationDate: nextBusinessDate(agreementDate),
       agreementDate,
       sourceUrl: `${STJ_AGREEMENTS_URL}/page:1/sala:${chamberExternalId}/search_value:${toca.replace("/", ".")}/m:0`,
       rawPayload: { metadata, row: Object.fromEntries(headers.map((header, cellIndex) => [header, cells[cellIndex] ?? ""])) },
@@ -123,8 +124,8 @@ function maxPage(html: string): number {
 export class StjJaliscoProvider implements JudicialSourceProvider {
   readonly id = "jalisco-stj-chambers";
   readonly name = "Supremo Tribunal de Justicia del Estado de Jalisco";
-  readonly providerVersion = "1.0.0";
-  readonly parserVersion = "stj-agreements-html-1";
+  readonly providerVersion = "1.0.1";
+  readonly parserVersion = "stj-agreements-html-2";
 
   async discover() {
     return { sourceUrl: STJ_AGREEMENTS_URL, capabilities: ["eleven-chambers", "agreements-by-toca", "sentence-signal", "public-judgment-link", "strict-chamber-toca-match"] };
