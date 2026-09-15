@@ -5,29 +5,36 @@ env:
 
 on:
   workflow_dispatch:
+    inputs:
+      from:
+        description: "Desde (AAAA-MM-DD); vacío = hace siete días"
+        type: string
+      to:
+        description: "Hasta (AAAA-MM-DD); vacío = ayer"
+        type: string
   schedule:
-    # 08:30 y 15:30 en Guadalajara (UTC-6). Los backfills históricos se ejecutan aparte.
-    - cron: "30 14,21 * * 1-5"
+    # Domingo 08:30 Guadalajara: ampliar índice con un presupuesto acotado.
+    - cron: "30 14 * * 0"
+    # Lunes a viernes 20:35 Guadalajara: solicitudes de búsqueda pendientes.
+    - cron: "35 2 * * 2-6"
 
 permissions:
   contents: read
 
 concurrency:
-  group: global-judicial-index-production
+  group: global-judicial-index-production-${{ github.event.schedule || 'manual' }}
   cancel-in-progress: false
 
 jobs:
   jalisco:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 14 * * 0'
     runs-on: ubuntu-latest
-    timeout-minutes: 105
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        shard: ["1/4", "2/4", "3/4", "4/4"]
+    timeout-minutes: 25
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
+      REQUESTED_FROM: ${{ inputs.from }}
+      REQUESTED_TO: ${{ inputs.to }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -41,21 +48,20 @@ jobs:
       - run: pnpm db:migrate
       - name: Indexar boletín global de Jalisco
         run: |
-          INDEX_DATE=$(TZ=America/Mexico_City date +%F)
-          pnpm index:global -- --provider=jalisco-cjj --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --shard="${{ matrix.shard }}" --max-units=60 --max-minutes=85 --max-consecutive-failures=3
+          INDEX_FROM=${REQUESTED_FROM:-$(TZ=America/Mexico_City date -d '7 days ago' +%F)}
+          INDEX_TO=${REQUESTED_TO:-$(TZ=America/Mexico_City date -d yesterday +%F)}
+          pnpm index:global -- --provider=jalisco-cjj --from="$INDEX_FROM" --to="$INDEX_TO" --apply --resume=latest --max-units=60 --max-minutes=18 --max-consecutive-failures=3
 
   federal:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 14 * * 0'
     runs-on: ubuntu-latest
-    timeout-minutes: 105
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        shard: ["1/4", "2/4", "3/4", "4/4"]
+    timeout-minutes: 25
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
       FEDERAL_SESSION_BASE: https://www.dgej.cjf.gob.mx/SiseInternet
+      REQUESTED_FROM: ${{ inputs.from }}
+      REQUESTED_TO: ${{ inputs.to }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -69,13 +75,14 @@ jobs:
       - run: pnpm db:migrate
       - name: Continuar índice federal global
         run: |
-          INDEX_DATE=$(TZ=America/Mexico_City date +%F)
-          pnpm index:global -- --provider=federal-pjf-session-lists --from="$INDEX_DATE" --to="$INDEX_DATE" --apply --resume=latest --shard="${{ matrix.shard }}" --max-units=160 --max-minutes=85 --max-consecutive-failures=3
+          INDEX_FROM=${REQUESTED_FROM:-$(TZ=America/Mexico_City date -d '7 days ago' +%F)}
+          INDEX_TO=${REQUESTED_TO:-$(TZ=America/Mexico_City date -d yesterday +%F)}
+          pnpm index:global -- --provider=federal-pjf-session-lists --from="$INDEX_FROM" --to="$INDEX_TO" --apply --resume=latest --max-units=160 --max-minutes=18 --max-consecutive-failures=3
 
   deep-search:
-    needs: jalisco
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '35 2 * * 2-6'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SOURCE_USER_AGENT: ${{ secrets.SOURCE_USER_AGENT }}
@@ -90,4 +97,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Continuar búsquedas ampliadas y backfills solicitados
-        run: pnpm judicial:deep-worker -- --jobs=4 --units=10
+        run: pnpm judicial:deep-worker -- --jobs=1 --units=2
